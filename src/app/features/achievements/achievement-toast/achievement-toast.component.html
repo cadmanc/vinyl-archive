@@ -1,0 +1,20 @@
+<div class="toast-container">
+  <div class="toast-content">
+    <div
+      class="badge-icon"
+      [style.background]="badgeIconBackground()"
+      [innerHTML]="getBadgeIcon()"
+    ></div>
+    <div class="toast-text">
+      <div class="toast-title" [style.color]="tierColor() || null">{{ getTitle() }}</div>
+      <div class="badge-name">
+        {{ getBadgeName() }}
+        @if (getTierName()) {
+          <span class="tier-name" [style.color]="tierColor()">{{ getTierName() }}</span>
+        }
+      </div>
+      <div class="badge-description">{{ getDescription() }}</div>
+    </div>
+  </div>
+  <button class="dismiss-btn" (click)="onDismiss()">OK</button>
+</div>

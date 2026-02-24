@@ -11,12 +11,13 @@ A personal listening tracker for your Discogs vinyl collection. Get personalized
 - **Sync Your Collection** - Import your entire Discogs collection with one click
 - **Smart Recommendations** - Get weighted random recommendations that prioritize unplayed and neglected albums
 - **Play Tracking** - Track play counts and last played dates for each release
+- **Personal Ratings** - Rate albums 1–3 to influence how often they're recommended
 - **Search** - Quickly find any album in your collection with real-time search
 - **Play History** - View your 10 most recent plays with quick access to replay
 - **Filtering** - Filter recommendations by genre, pressing decade, original decade, exclude box sets, or albums not played in 6+ months
 - **Original Release Year** - Optionally sync master release data to see when albums were first released
 - **Collection Stats** - Dedicated stats drawer with collection coverage metrics, most played album, and oldest never-played discovery
-- **Achievements** - Earn 15 badges across 6 categories for collection milestones, play activity, and music discovery
+- **Achievements** - Earn 7 tiered badges with progression from Bronze to Legendary for collection milestones, play activity, and music discovery
 - **Backup & Restore** - Export and import your play data as JSON files
 - **Local Storage** - All play data stored locally in your browser using IndexedDB
 - **Mobile First** - Optimized for mobile devices with a clean, touch-friendly interface
@@ -41,6 +42,7 @@ Your credentials are stored locally in your browser and never sent anywhere exce
 
 - The app displays a vinyl record with album art from your collection
 - You'll see the artist, album title, year, format, play count, and last played date
+- **Rating** - Tap the three dots below the stats to rate an album 1–3; tap the current level again to clear
 - Two main actions:
   - **Mark as Played** - Logs a play (increments count, updates date) and loads the next recommendation
   - **Skip / Get Another** - Get a new recommendation without logging a play
@@ -81,17 +83,18 @@ Your credentials are stored locally in your browser and never sent anywhere exce
 **Achievements Drawer**
 
 - Tap the trophy icon to view your achievements progress
-- 15 badges across 6 categories reward your listening habits:
-  - **Collection** - Starter (10 albums), Collector (50), Archivist (100)
-  - **Play Count** - Century (100 plays), Devoted (500), Obsessed (1000)
-  - **Coverage** - No Dust (100% of collection played)
-  - **Discovery** - Genre Explorer (5+ genres), Decade Hopper (5+ decades)
-  - **Artist** - Fan (10 plays same artist), Superfan (25), Fanatic (50)
-  - **Album** - On Repeat (10 plays same album), Worn Grooves (25), Needle Dropper (50)
-- Locked badges show grayscale icons with progress bars
-- Unlocked badges display colored icons with a copper highlight
-- A toast notification appears when you earn a new badge
-- Existing users receive retroactive credit for already-earned achievements
+- 7 badges with tiered progression reward your listening habits:
+  - **Collector** - Build your collection (Bronze: 10 → Silver: 50 → Gold: 100 → Platinum: 500 → Diamond: 1000 → Legendary: 2500)
+  - **Spins** - Total plays logged (Bronze: 100 → Silver: 500 → Gold: 1000 → Platinum: 2500 → Diamond: 5000 → Legendary: 10000)
+  - **Coverage** - Play through your collection with vinyl-themed tiers (Needle Drop: 25% → Flip Side: 50% → Inner Groove: 75% → Mint Condition: 100%)
+  - **Genre Explorer** - Play albums from 5+ different genres (non-tiered)
+  - **Decade Hopper** - Play albums from 5+ different decades (non-tiered)
+  - **Devotion** - Artist dedication (Bronze: 10 → Silver: 25 → Gold: 50 → Platinum: 100 → Diamond: 250 → Legendary: 500)
+  - **Favorite** - Album replay (Bronze: 10 → Silver: 25 → Gold: 50 → Platinum: 100 → Diamond: 200 → Legendary: 500)
+- Locked badges show grayscale icons with progress bars toward the next tier
+- Unlocked badges display tier-colored icons (bronze, silver, gold, etc.)
+- Toast notifications appear when you earn a new badge or upgrade to a higher tier
+- Existing users receive retroactive credit for already-earned achievements and tiers
 
 **Recommendation Algorithm**
 
@@ -100,7 +103,8 @@ Your credentials are stored locally in your browser and never sent anywhere exce
   - Items with **lower play counts** have higher weight
   - Items **not played recently** have higher weight
   - Recent plays still have a chance, just lower probability
-  - Formula: `weight = (1 / playCount) * log(daysSincePlay + 1)`
+  - Albums **rated 3** are 50% more likely; **rated 1** are 25% less likely; unrated = neutral
+  - Formula: `weight = (1 / playCount) * log(daysSincePlay + 1) * ratingMultiplier`
 
 **Menu Drawer**
 
@@ -242,54 +246,7 @@ The build artifacts will be stored in the `dist/` directory.
 
 ### Project Structure
 
-```
-src/
-├── app/
-│   ├── components/
-│   │   ├── vinyl-player/          # Main player interface
-│   │   ├── setup-screen/          # First-time credentials setup
-│   │   ├── sync-screen/           # Collection sync UI
-│   │   ├── menu-drawer/           # Side menu with filters and settings
-│   │   ├── search-sheet/          # Collection search bottom sheet
-│   │   ├── play-history-sheet/    # Recent plays bottom sheet
-│   │   ├── stats-sheet/           # Collection stats bottom sheet
-│   │   ├── achievements-sheet/    # Achievements/badges bottom sheet
-│   │   └── achievement-toast/     # Badge unlock notification
-│   ├── models/
-│   │   ├── release.model.ts       # Release data structure
-│   │   ├── discogs-api.model.ts   # Discogs API types
-│   │   ├── credentials.model.ts   # Discogs credentials types
-│   │   ├── collection-stats.model.ts  # Stats types
-│   │   ├── filter.model.ts        # Filter configuration
-│   │   ├── play-history.model.ts  # Play history entry
-│   │   ├── play-stats-export.model.ts # Export/import format
-│   │   └── achievement.model.ts   # Badge definitions and progress
-│   ├── services/
-│   │   ├── database.service.ts    # Dexie/IndexedDB wrapper
-│   │   ├── discogs.service.ts     # Discogs API integration
-│   │   ├── credentials.service.ts # Discogs credentials management
-│   │   ├── playback.service.ts    # Play tracking logic
-│   │   ├── recommendation.service.ts  # Recommendation algorithm
-│   │   ├── filter.service.ts      # Filter state management
-│   │   ├── play-history.service.ts    # Recent plays tracking
-│   │   ├── play-stats-export.service.ts # Backup/restore logic
-│   │   ├── master-release.service.ts # Fetches original years from Discogs master releases
-│   │   ├── pwa-update.service.ts    # Service worker update handling
-│   │   └── achievements.service.ts  # Badge tracking and progress calculation
-│   ├── pipes/
-│   │   └── artist-name.pipe.ts    # Cleans Discogs artist name disambiguation
-│   ├── constants/
-│   │   ├── timing.constants.ts    # Animation and timing values
-│   │   └── badge-icons.constants.ts # SVG icons for achievement badges
-│   └── app.ts                     # Root component
-├── styles/
-│   ├── _variables.scss            # Color and design tokens
-│   └── _mixins.scss               # Reusable style patterns
-├── environments/
-│   ├── environment.ts             # Development config (API URL only)
-│   └── environment.prod.ts        # Production config (API URL only)
-└── index.html
-```
+The project uses a **feature-based** structure — each feature folder contains its own components, services, and models. Cross-cutting concerns live in `core/` (app-wide singletons like database and credentials) and `shared/` (reusable UI and utilities used across multiple features).
 
 ## Tech Stack
 
@@ -351,7 +308,7 @@ $color-turntable-dark: #2a6a8f;
 
 ### Recommendation Algorithm
 
-To adjust the recommendation weighting, edit `recommendation.service.ts`:
+To adjust the recommendation weighting, edit `src/app/features/player/recommendation.service.ts`:
 
 ```typescript
 // Current formula
@@ -428,7 +385,7 @@ The app is a static Angular application and can be deployed to:
 
 - The algorithm is working as designed - items with very low play counts will dominate
 - Play more of your collection to balance things out
-- Or adjust the weighting formula in `recommendation.service.ts`
+- Or adjust the weighting formula in `src/app/features/player/recommendation.service.ts`
 
 **Filters not showing genres/decades:**
 

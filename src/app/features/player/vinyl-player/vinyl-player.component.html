@@ -1,0 +1,196 @@
+<div class="vinyl-player-container">
+  <div class="player-header">
+    <button class="search-button" (click)="toggleSearch()">
+      <span class="search-icon">&#x1F50D;</span>
+    </button>
+    <button class="history-button" (click)="toggleHistory()">
+      <span class="history-icon">&#x1F553;</span>
+    </button>
+    <button class="stats-button" (click)="toggleStats()">
+      <span class="stats-icon">&#x1F4CA;</span>
+    </button>
+    <button class="achievements-button" (click)="toggleAchievements()">
+      <span class="achievements-icon">&#x1F3C6;</span>
+    </button>
+    <button class="menu-button" (click)="toggleMenu()">
+      <span class="menu-icon">⋮</span>
+    </button>
+  </div>
+
+  <app-menu-drawer
+    [isOpen]="menuOpen()"
+    (close)="closeMenu()"
+    (dataCleared)="onDataCleared()"
+    (filtersChanged)="onFiltersChanged()"
+    (openChangelog)="openChangelog()"
+  ></app-menu-drawer>
+
+  <app-search-sheet
+    [isOpen]="searchOpen()"
+    (close)="closeSearch()"
+    (releaseSelected)="onReleaseSelected($event)"
+  ></app-search-sheet>
+
+  <app-play-history-sheet
+    [isOpen]="historyOpen()"
+    (close)="closeHistory()"
+    (releaseSelected)="onHistoryReleaseSelected($event)"
+  ></app-play-history-sheet>
+
+  <app-stats-sheet
+    [isOpen]="statsOpen()"
+    (close)="closeStats()"
+    (filterApplied)="onFiltersChanged()"
+    (releaseSelected)="onReleaseSelected($event)"
+  ></app-stats-sheet>
+
+  <app-achievements-sheet
+    [isOpen]="achievementsOpen()"
+    (close)="closeAchievements()"
+  ></app-achievements-sheet>
+
+  <app-changelog-sheet [isOpen]="changelogOpen()" (close)="closeChangelog()"></app-changelog-sheet>
+
+  @if (isLoading()) {
+    <div class="loading">
+      <p>Loading recommendation...</p>
+    </div>
+  } @else if (currentRelease(); as release) {
+    <div class="player">
+      <!-- Vinyl Record Player -->
+      <div class="turntable-wrapper">
+        <div class="turntable-base">
+          <!-- Record -->
+          <div class="record">
+            <!-- Vinyl disc background -->
+            <div class="vinyl-disc"></div>
+
+            <!-- Grooves effect -->
+            <div class="grooves">
+              @for (groove of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; track groove) {
+                <div class="groove" [style.inset.%]="groove * 8"></div>
+              }
+            </div>
+
+            <!-- Album Art - spins on play -->
+            <div class="album-art" [class.spinning]="isSpinning()">
+              <img
+                [src]="release.basicInfo.coverImage || release.basicInfo.thumb"
+                [alt]="release.basicInfo.title"
+              />
+              <div class="vinyl-texture"></div>
+            </div>
+
+            <!-- Center label -->
+            <div class="center-label">
+              <div class="center-hole"></div>
+            </div>
+          </div>
+
+          <!-- Tonearm/Stylus -->
+          <div class="tonearm" [class.playing]="isSpinning()">
+            <div class="arm"></div>
+            <div class="headshell"></div>
+            <div class="pivot"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Album Info -->
+      <div class="album-info">
+        <h2 class="artist">{{ release.basicInfo.artists | artistName }}</h2>
+        <h3 class="title">{{ release.basicInfo.title }}</h3>
+        <p class="meta">
+          @if (
+            release.basicInfo.originalYear &&
+            release.basicInfo.year &&
+            release.basicInfo.originalYear !== release.basicInfo.year
+          ) {
+            {{ release.basicInfo.originalYear }} ({{ release.basicInfo.year }}
+            pressing)
+          } @else if (release.basicInfo.originalYear) {
+            {{ release.basicInfo.originalYear }}
+          } @else if (release.basicInfo.year) {
+            {{ release.basicInfo.year }}
+          } @else {
+            Unknown year
+          }
+          • {{ releaseFormatString() }}
+        </p>
+      </div>
+
+      <!-- Stats -->
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-value">{{ release.playCount }}</div>
+          <div class="stat-label">Plays</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">{{ releaseLastPlayedDate() }}</div>
+          <div class="stat-label">Last Played</div>
+        </div>
+      </div>
+
+      <!-- Rating -->
+      <div class="rating">
+        <span class="rating-label">Rating</span>
+        <div class="rating-dots">
+          <button
+            class="rating-dot"
+            [class.active]="(release.userRating ?? 0) >= 1"
+            (click)="setRating(1)"
+            aria-label="Rating 1"
+          ></button>
+          <button
+            class="rating-dot"
+            [class.active]="(release.userRating ?? 0) >= 2"
+            (click)="setRating(2)"
+            aria-label="Rating 2"
+          ></button>
+          <button
+            class="rating-dot"
+            [class.active]="(release.userRating ?? 0) >= 3"
+            (click)="setRating(3)"
+            aria-label="Rating 3"
+          ></button>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="actions">
+        <button class="btn-primary" (click)="markAsPlayed()" [disabled]="isSpinning()">
+          <span class="btn-icon">▶</span>
+          {{ isSpinning() ? 'Playing...' : 'Mark as Played' }}
+        </button>
+
+        <button class="btn-secondary" (click)="skipToNext()" [disabled]="isSpinning()">
+          <span class="btn-icon">⏭</span>
+          Skip / Get Another
+        </button>
+      </div>
+
+      <!-- Filter Count -->
+      <div class="filter-count">
+        Choosing from {{ filteredCount() }} album{{ filteredCount() === 1 ? '' : 's' }}
+      </div>
+
+      <!-- Master Release Fetch Progress -->
+      @if (masterFetchInProgress()) {
+        <div class="master-fetch-progress">
+          <span class="progress-text">Fetching release dates...</span>
+          <span class="progress-count">{{ masterFetchRemaining() }} remaining</span>
+        </div>
+      }
+    </div>
+  } @else {
+    <div class="empty-state">
+      <p>No releases found in your collection.</p>
+      <p>Please sync your Discogs collection first.</p>
+    </div>
+  }
+
+  @if (pendingToast()) {
+    <app-achievement-toast [unlockEvent]="pendingToast()!" (dismiss)="dismissToast()">
+    </app-achievement-toast>
+  }
+</div>

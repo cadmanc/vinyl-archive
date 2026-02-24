@@ -1,0 +1,80 @@
+<div class="sheet-container" [class.open]="isOpen()">
+  <div class="backdrop" (click)="onBackdropClick()"></div>
+
+  <div class="sheet">
+    <div class="drag-handle">
+      <div class="handle-bar"></div>
+    </div>
+
+    <div class="achievements-header">
+      <h2 class="header-title">Achievements</h2>
+      <div class="header-progress">{{ unlockedCount() }}/{{ totalCount() }}</div>
+    </div>
+
+    <div class="achievements-content">
+      @if (isLoading()) {
+        <div class="loading-state">
+          <p>Loading achievements...</p>
+        </div>
+      } @else if (badgeViewModels().length > 0) {
+        <div class="badges-grid">
+          @for (badge of badgeViewModels(); track badge.badge.id) {
+            <div
+              class="badge-item"
+              [class.unlocked]="badge.isUnlocked"
+              [class.locked]="!badge.isUnlocked"
+              [class.max-tier]="badge.maxTier"
+            >
+              <div
+                class="badge-icon"
+                [class.icon-unlocked]="badge.isUnlocked"
+                [class.icon-locked]="!badge.isUnlocked"
+                [style.color]="badge.isUnlocked ? badge.tierColor : null"
+                [innerHTML]="badge.icon"
+              ></div>
+              <div class="badge-name">{{ badge.badge.name }}</div>
+
+              @if (badge.tiered && badge.isUnlocked && badge.currentTier) {
+                <div class="badge-tier" [style.color]="badge.tierColor">
+                  {{ badge.tierName }}
+                </div>
+              }
+
+              <div class="badge-description">{{ badge.badge.description }}</div>
+
+              @if (!badge.isUnlocked || badge.nextTier) {
+                <div class="badge-progress">
+                  <div class="progress-bar">
+                    <div
+                      class="progress-fill"
+                      [style.width.%]="badge.progressPercentage"
+                      [style.background-color]="badge.isUnlocked ? badge.tierColor : null"
+                    ></div>
+                  </div>
+                  <div class="progress-text">
+                    @if (badge.nextTier) {
+                      <span class="next-tier">{{ badge.nextTierName }}: </span>
+                    }
+                    {{ badge.formattedProgress }}
+                  </div>
+                </div>
+              } @else if (badge.maxTier) {
+                <div class="badge-unlocked-text" [style.color]="badge.tierColor">
+                  &#x2713; {{ badge.formattedProgress }}
+                </div>
+              } @else {
+                <div class="badge-unlocked-text">&#x2713; Unlocked</div>
+              }
+            </div>
+          }
+        </div>
+      } @else {
+        <div class="empty-state">
+          <span class="empty-icon">&#x1F3C6;</span>
+          <p>No achievements available</p>
+          <p class="empty-hint">Sync your collection to start earning badges</p>
+        </div>
+      }
+    </div>
+  </div>
+</div>
