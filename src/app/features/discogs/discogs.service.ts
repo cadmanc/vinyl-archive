@@ -6,7 +6,11 @@ import { DatabaseService } from '../../core/database.service';
 import { PlayHistoryService } from '../player/play-history.service';
 import { CredentialsService } from '../../core/credentials.service';
 import { Release } from '../../shared/models/release.model';
-import { DiscogsCollectionResponse, DiscogsRelease } from './discogs-api.model';
+import {
+  conciseDiscogsFormat,
+  DiscogsCollectionResponse,
+  DiscogsRelease,
+} from './discogs-api.model';
 import { DISCOGS_API_DELAY_MS } from '../../shared/constants/timing.constants';
 
 @Injectable({
@@ -114,9 +118,15 @@ export class DiscogsService {
         }),
         discCount:
           basicInfo.formats.reduce((sum, f) => sum + (parseInt(f.qty, 10) || 0), 0) || undefined,
+        format:
+          basicInfo.formats
+            .map((f) => conciseDiscogsFormat(f.name, f.descriptions, f.qty))
+            .join(', ') || undefined,
         thumb: basicInfo.thumb,
         coverImage: basicInfo.cover_image,
         labels: basicInfo.labels.map((l) => l.name),
+        label: basicInfo.labels[0]?.name,
+        catalogNumber: basicInfo.labels[0]?.catno,
         genres: basicInfo.genres,
         styles: basicInfo.styles,
       },
@@ -175,7 +185,7 @@ export class DiscogsService {
       if (existing) {
         // Update only the Discogs metadata, preserve play tracking data
         await this.db.updateRelease(release.id, {
-          basicInfo: release.basicInfo,
+          basicInfo: { ...existing.basicInfo, ...release.basicInfo },
           dateAddedToCollection: release.dateAddedToCollection,
           notes: release.notes,
           rating: release.rating,

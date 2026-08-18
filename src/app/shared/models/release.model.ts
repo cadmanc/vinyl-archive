@@ -1,3 +1,10 @@
+export interface ReleaseTrack {
+  position: string;
+  title: string;
+  duration?: string;
+  type?: string;
+}
+
 export interface Release {
   id: number; // Discogs release ID (primary key)
   instanceId: number; // Discogs collection instance ID
@@ -9,6 +16,13 @@ export interface Release {
     originalYear?: number; // Original release year from master
     formats: string[];
     discCount?: number; // sum of formats[].qty; undefined until re-synced from Discogs
+    trackCount?: number;
+    totalRuntimeSeconds?: number;
+    label?: string;
+    catalogNumber?: string;
+    format?: string;
+    tracklist?: ReleaseTrack[];
+    detailsFetched?: boolean;
     thumb?: string;
     coverImage?: string;
     labels?: string[];

@@ -54,7 +54,39 @@ export interface DiscogsRelease {
 
 export interface DiscogsMasterRelease {
   id: number;
-  year: number;
+  year?: number;
   title: string;
   resource_url: string;
+}
+
+export interface DiscogsMasterVersionsResponse {
+  versions?: Array<{
+    id: number;
+    released?: string | number;
+  }>;
+}
+
+export interface DiscogsReleaseDetails {
+  id: number;
+  year?: number;
+  master_id?: number;
+  artists?: Array<{ name: string }>;
+  labels?: Array<{ name?: string; catno?: string }>;
+  formats?: Array<{ name?: string; qty?: string; descriptions?: string[] }>;
+  tracklist?: Array<{ position?: string; title?: string; duration?: string; type?: string }>;
+}
+
+export function conciseDiscogsFormat(
+  name?: string,
+  descriptions: string[] = [],
+  quantity?: string,
+): string {
+  if (!name) return '';
+  const primary =
+    name.toLocaleLowerCase() === 'vinyl'
+      ? (descriptions.find((description) => /^(lp|ep)$/i.test(description)) ?? name)
+      : name;
+  const extras = descriptions.filter((description) => description !== primary);
+  const prefix = Number(quantity) > 1 ? `${quantity}×` : '';
+  return [prefix + primary, ...extras].join(', ');
 }

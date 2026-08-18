@@ -45,7 +45,7 @@ export class PwaUpdateService {
   }
 
   private promptUserToUpdate(): void {
-    const shouldUpdate = confirm('A new version of VinylTracker is available. Reload to update?');
+    const shouldUpdate = confirm('A new version of Vinyl Archive is available. Reload to update?');
 
     if (shouldUpdate) {
       this.activateUpdate();

@@ -1,21 +1,11 @@
 <div class="vinyl-player-container">
-  <div class="player-header">
-    <button class="search-button" (click)="toggleSearch()">
-      <span class="search-icon">&#x1F50D;</span>
-    </button>
-    <button class="history-button" (click)="toggleHistory()">
-      <span class="history-icon">&#x1F553;</span>
-    </button>
-    <button class="stats-button" (click)="toggleStats()">
-      <span class="stats-icon">&#x1F4CA;</span>
-    </button>
-    <button class="achievements-button" (click)="toggleAchievements()">
-      <span class="achievements-icon">&#x1F3C6;</span>
-    </button>
-    <button class="menu-button" (click)="toggleMenu()">
-      <span class="menu-icon">⋮</span>
-    </button>
-  </div>
+  <app-navigation-controls
+    (search)="toggleSearch()"
+    (history)="toggleHistory()"
+    (stats)="toggleStats()"
+    (achievements)="toggleAchievements()"
+    (menu)="toggleMenu()"
+  ></app-navigation-controls>
 
   <app-menu-drawer
     [isOpen]="menuOpen()"

@@ -43,6 +43,9 @@ export class SyncScreenComponent {
     if (result.success) {
       this.syncProgress.set(`✅ Successfully synced ${result.totalSynced} releases!`);
 
+      // Enrich every exact Discogs release, regardless of original-year setting.
+      this.masterReleaseService.startReleaseDetailEnrichment?.();
+
       // Start background fetch of master release data (original years) if enabled
       if (this.fetchReleaseDates()) {
         await this.masterReleaseService.startBackgroundFetch();
@@ -52,9 +55,9 @@ export class SyncScreenComponent {
       const releases = await this.db.getAllReleases();
       this.achievementsService.initialize(releases);
 
-      // Wait a moment to show success message, then navigate to player
+      // Wait a moment to show success message, then navigate to the collection
       setTimeout(() => {
-        this.router.navigate(['/']);
+        this.router.navigate(['/collection']);
       }, SYNC_TRANSITION_DELAY_MS);
     } else {
       this.syncProgress.set(`❌ Sync failed: ${result.error}`);

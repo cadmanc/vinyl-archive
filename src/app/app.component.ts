@@ -40,9 +40,10 @@ export class AppComponent implements OnInit {
     }
 
     // Resume background services for returning users
+    this.masterReleaseService.startReleaseDetailEnrichment();
     this.masterReleaseService.resumeIfNeeded();
     const releases = await this.db.getAllReleases();
     this.achievementsService.initialize(releases);
-    this.router.navigate(['/']);
+    this.router.navigate(['/collection']);
   }
 }

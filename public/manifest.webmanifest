@@ -1,6 +1,6 @@
 {
-  "name": "VinylTracker",
-  "short_name": "VinylTracker",
+  "name": "Vinyl Archive",
+  "short_name": "Vinyl Archive",
   "description": "Track and manage your vinyl record collection with Discogs integration",
   "theme_color": "#1c1c1c",
   "background_color": "#1c1c1c",

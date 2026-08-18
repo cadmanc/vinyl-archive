@@ -64,7 +64,7 @@ export class SetupScreenComponent implements OnInit {
     });
 
     if (this.hasExistingData()) {
-      this.router.navigate(['/']);
+      this.router.navigate(['/collection']);
     } else {
       this.router.navigate(['/sync']);
     }

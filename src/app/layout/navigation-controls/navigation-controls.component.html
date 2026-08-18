@@ -1,0 +1,41 @@
+<div class="navigation-controls">
+  <button class="search-button" type="button" (click)="search.emit()" aria-label="Search">
+    <span class="search-icon">&#x1F50D;</span>
+  </button>
+  @if (showHistory()) {
+    <button class="history-button" type="button" (click)="history.emit()" aria-label="History">
+      <span class="history-icon">&#x1F553;</span>
+    </button>
+  }
+  @if (showStats()) {
+    <button class="stats-button" type="button" (click)="stats.emit()" aria-label="Statistics">
+      <span class="stats-icon">&#x1F4CA;</span>
+    </button>
+  }
+  @if (showAchievements()) {
+    <button
+      class="achievements-button"
+      type="button"
+      (click)="achievements.emit()"
+      aria-label="Achievements"
+    >
+      <span class="achievements-icon">&#x1F3C6;</span>
+    </button>
+  }
+  @if (showCollection()) {
+    <button
+      class="collection-button"
+      type="button"
+      [class.active]="activeSection() === 'collection'"
+      (click)="openCollection()"
+      aria-label="Open collection"
+      [attr.aria-current]="activeSection() === 'collection' ? 'page' : null"
+    >
+      <span class="collection-icon">&#x1F4DA;</span>
+      <span class="collection-label">Collection</span>
+    </button>
+  }
+  <button class="menu-button" type="button" (click)="menu.emit()" aria-label="More">
+    <span class="menu-icon">⋮</span>
+  </button>
+</div>

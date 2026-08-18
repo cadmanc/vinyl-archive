@@ -70,7 +70,7 @@ describe('SyncScreenComponent', () => {
       expect(spectator.component.syncProgress()).toBe('✅ Successfully synced 42 releases!');
     });
 
-    it('should navigate to / after delay on successful sync', async () => {
+    it('should navigate to /collection after delay on successful sync', async () => {
       const discogsService = spectator.inject(DiscogsService);
       const db = spectator.inject(DatabaseService);
       const router = spectator.inject(Router);
@@ -87,7 +87,7 @@ describe('SyncScreenComponent', () => {
 
       // Should navigate after transition delay
       jest.advanceTimersByTime(SYNC_TRANSITION_DELAY_MS);
-      expect(router.navigate).toHaveBeenCalledWith(['/']);
+      expect(router.navigate).toHaveBeenCalledWith(['/collection']);
     });
 
     it('should keep syncing true during success delay', async () => {

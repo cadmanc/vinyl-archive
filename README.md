@@ -1,4 +1,4 @@
-# Vinyl Tracker
+# Vinyl Archive
 
 A personal listening tracker for your Discogs vinyl collection. Get personalized album recommendations based on play history, search your collection, and track your listening habits.
 

@@ -18,7 +18,13 @@ export const routes: Routes = [
     canActivate: [syncGuard],
   },
   {
-    path: '',
+    path: 'collection',
+    loadComponent: () =>
+      import('./features/collection/collection.component').then((m) => m.CollectionComponent),
+    canActivate: [playerGuard],
+  },
+  {
+    path: 'player',
     loadComponent: () =>
       import('./features/player/vinyl-player/vinyl-player.component').then(
         (m) => m.VinylPlayerComponent,
@@ -26,7 +32,12 @@ export const routes: Routes = [
     canActivate: [playerGuard],
   },
   {
+    path: '',
+    redirectTo: 'collection',
+    pathMatch: 'full',
+  },
+  {
     path: '**',
-    redirectTo: '',
+    redirectTo: 'collection',
   },
 ];

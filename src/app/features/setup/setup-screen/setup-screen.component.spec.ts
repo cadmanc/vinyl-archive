@@ -178,7 +178,7 @@ describe('SetupScreenComponent', () => {
       expect(router.navigate).toHaveBeenCalledWith(['/sync']);
     });
 
-    it('should navigate to / when existing data is present', () => {
+    it('should navigate to /collection when existing data is present', () => {
       const router = spectator.inject(Router);
       spectator.component.username.set('testuser');
       spectator.component.token.set('testtoken');
@@ -186,7 +186,7 @@ describe('SetupScreenComponent', () => {
 
       spectator.component.submit();
 
-      expect(router.navigate).toHaveBeenCalledWith(['/']);
+      expect(router.navigate).toHaveBeenCalledWith(['/collection']);
     });
 
     it('should not save credentials when validation fails', () => {

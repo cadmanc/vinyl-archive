@@ -278,6 +278,9 @@ export class MenuDrawerComponent implements OnDestroy {
         this.syncMessage.set(`✅ Synced ${result.totalSynced} releases!`);
         this.loadMenuData();
 
+        // Enrich every exact Discogs release, regardless of original-year setting.
+        this.masterReleaseService.startReleaseDetailEnrichment?.();
+
         // Start background fetch of master release data if enabled
         if (this.masterReleaseSyncEnabled()) {
           await this.masterReleaseService.startBackgroundFetch();

@@ -1,0 +1,178 @@
+<main class="collection-page">
+  <app-navigation-controls
+    activeSection="collection"
+    [showHistory]="false"
+    [showStats]="false"
+    [showAchievements]="false"
+    [showCollection]="false"
+    (search)="toggleSearch()"
+    (menu)="toggleMenu()"
+  ></app-navigation-controls>
+
+  <app-menu-drawer
+    [isOpen]="menuOpen()"
+    (close)="closeMenu()"
+    (dataCleared)="onDataCleared()"
+    (filtersChanged)="closeMenu()"
+    (openChangelog)="openChangelog()"
+  ></app-menu-drawer>
+
+  <app-search-sheet
+    [isOpen]="searchOpen()"
+    (close)="closeSearch()"
+    (releaseSelected)="onReleaseSelected()"
+  ></app-search-sheet>
+
+  <app-play-history-sheet
+    [isOpen]="historyOpen()"
+    (close)="closeHistory()"
+    (releaseSelected)="onReleaseSelected()"
+  ></app-play-history-sheet>
+
+  <app-stats-sheet
+    [isOpen]="statsOpen()"
+    (close)="closeStats()"
+    (releaseSelected)="onReleaseSelected()"
+  ></app-stats-sheet>
+
+  <app-achievements-sheet
+    [isOpen]="achievementsOpen()"
+    (close)="closeAchievements()"
+  ></app-achievements-sheet>
+
+  <app-changelog-sheet [isOpen]="changelogOpen()" (close)="closeChangelog()"></app-changelog-sheet>
+
+  <header class="collection-header">
+    <div>
+      <p class="eyebrow">Vinyl Archive</p>
+      <h1>Collection</h1>
+      <span class="record-count">{{ releases().length }} records</span>
+    </div>
+  </header>
+
+  @if (detailProgress.inProgress) {
+    <p class="enrichment-progress">
+      Fetching release details: {{ detailProgress.completed }} of {{ detailProgress.total }}
+    </p>
+  }
+
+  <nav class="quick-index" aria-label="Jump to artist">
+    @for (letter of letters; track letter) {
+      <button
+        type="button"
+        [class.disabled]="!availableSections().has(letter)"
+        [disabled]="!availableSections().has(letter)"
+        (click)="scrollToSection(letter)"
+      >
+        {{ letter }}
+      </button>
+    }
+  </nav>
+
+  @if (isLoading()) {
+    <p class="collection-status">Loading collection...</p>
+  } @else if (releases().length === 0) {
+    <p class="collection-status">No records found in your collection.</p>
+  } @else {
+    <section class="collection-list" aria-label="Your collection">
+      @for (letter of letters; track letter) {
+        @if (availableSections().has(letter)) {
+          <div class="letter-section" [id]="'collection-section-' + letter">
+            <h2 class="letter-heading">{{ letter }}</h2>
+            @for (group of groups(); track group.key) {
+              @if (sectionKey(group.heading) === letter) {
+                <section class="artist-group" [attr.aria-label]="group.heading">
+                  <h3>{{ group.heading }}</h3>
+                  @for (release of group.releases; track release.id) {
+                    <article
+                      class="release-row"
+                      [class.expanded]="isExpanded(release.id)"
+                      tabindex="0"
+                      (click)="toggleExpanded(release.id)"
+                      (keydown.enter)="toggleExpanded(release.id)"
+                      (keydown.space)="toggleExpanded(release.id); $event.preventDefault()"
+                    >
+                      <div class="artwork-frame">
+                        @if (release.basicInfo.coverImage || release.basicInfo.thumb) {
+                          <img
+                            [src]="release.basicInfo.coverImage || release.basicInfo.thumb"
+                            [alt]="release.basicInfo.title + ' album artwork'"
+                          />
+                        } @else {
+                          <div class="artwork-placeholder" aria-hidden="true">No art</div>
+                        }
+                      </div>
+                      <h4 [attr.title]="release.basicInfo.title">{{ release.basicInfo.title }}</h4>
+                      <div class="metadata-cell metadata-original">
+                        <dt>Original</dt>
+                        <dd>{{ originalYear(release) }}</dd>
+                      </div>
+                      <div class="metadata-cell metadata-pressing">
+                        <dt>Pressing</dt>
+                        <dd>{{ release.basicInfo.year || 'Unknown' }}</dd>
+                      </div>
+                      <div class="metadata-cell metadata-tracks">
+                        <dt>Tracks</dt>
+                        <dd>{{ trackCountLabel(release) }}</dd>
+                      </div>
+                      <div class="metadata-cell metadata-runtime">
+                        <dt>Runtime</dt>
+                        <dd>{{ runtimeLabel(release) }}</dd>
+                      </div>
+                      <div class="metadata-cell flexible-metadata metadata-label">
+                        <dt>Label / catalog</dt>
+                        <dd [attr.title]="labelAndCatalog(release)">
+                          {{ labelAndCatalog(release) }}
+                        </dd>
+                      </div>
+                      <div class="metadata-cell flexible-metadata metadata-format">
+                        <dt>Format</dt>
+                        <dd [attr.title]="formatLabel(release)">{{ formatLabel(release) }}</dd>
+                      </div>
+                      <button
+                        type="button"
+                        class="disclosure"
+                        [attr.aria-expanded]="isExpanded(release.id)"
+                        [attr.aria-label]="
+                          isExpanded(release.id) ? 'Collapse tracklist' : 'Expand tracklist'
+                        "
+                        (click)="$event.stopPropagation(); toggleExpanded(release.id)"
+                      >
+                        @if (isExpanded(release.id)) {
+                          &#x25B2;
+                        } @else {
+                          &#x25BC;
+                        }
+                      </button>
+                      @if (isExpanded(release.id)) {
+                        <div class="tracklist" (click)="$event.stopPropagation()">
+                          @if (release.basicInfo.detailsFetched !== true) {
+                            <p class="tracklist-empty">Fetching...</p>
+                          } @else if (release.basicInfo.tracklist?.length) {
+                            @for (track of release.basicInfo.tracklist; track $index) {
+                              <div class="track-row">
+                                <span class="track-position">{{
+                                  track.position || $index + 1
+                                }}</span>
+                                <span class="track-title">{{ track.title }}</span>
+                                <span class="track-duration">{{
+                                  track.duration || 'Unknown'
+                                }}</span>
+                              </div>
+                            }
+                          } @else {
+                            <p class="tracklist-empty">Tracklist unavailable.</p>
+                          }
+                        </div>
+                      }
+                    </article>
+                  }
+                </section>
+              }
+            }
+          </div>
+        }
+      }
+    </section>
+  }
+</main>

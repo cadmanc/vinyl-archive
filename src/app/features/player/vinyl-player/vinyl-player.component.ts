@@ -19,6 +19,7 @@ import { ArtistNamePipe } from '../../../shared/pipes/artist-name.pipe';
 import { SPIN_ANIMATION_DURATION_MS } from '../../../shared/constants/timing.constants';
 import { APP_VERSION } from '../../../shared/constants/app.constants';
 import { BadgeUnlockEvent } from '../../achievements/achievements.service';
+import { NavigationControlsComponent } from '../../../layout/navigation-controls/navigation-controls.component';
 
 @Component({
   selector: 'app-vinyl-player',
@@ -32,6 +33,7 @@ import { BadgeUnlockEvent } from '../../achievements/achievements.service';
     AchievementsSheetComponent,
     AchievementToastComponent,
     ChangelogSheetComponent,
+    NavigationControlsComponent,
     ArtistNamePipe,
   ],
   templateUrl: './vinyl-player.component.html',
@@ -207,6 +209,10 @@ export class VinylPlayerComponent implements OnDestroy {
 
   toggleMenu(): void {
     this.menuOpen.set(!this.menuOpen());
+  }
+
+  openCollection(): void {
+    this.router.navigate(['/collection']);
   }
 
   onDataCleared(): void {

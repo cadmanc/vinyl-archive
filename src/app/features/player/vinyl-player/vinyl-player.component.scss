@@ -23,39 +23,6 @@
 }
 
 // ==============================================
-// Header Buttons
-// ==============================================
-
-.player-header {
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  z-index: 10;
-  display: flex;
-  gap: 0.5rem;
-}
-
-.search-button,
-.history-button,
-.stats-button,
-.achievements-button,
-.menu-button {
-  @include btn-header;
-}
-
-.search-icon,
-.history-icon,
-.stats-icon,
-.achievements-icon {
-  font-size: 1.125rem;
-}
-
-.menu-icon {
-  font-size: 1.5rem;
-  font-weight: bold;
-}
-
-// ==============================================
 // Turntable
 // ==============================================
 

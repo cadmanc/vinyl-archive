@@ -352,11 +352,11 @@
 .clear-button {
   @include btn-base;
   background: transparent;
-  color: #e57373;
-  border: 1px solid #e57373;
+  color: $color-error;
+  border: 1px solid $color-error;
 
   &:hover:not(:disabled) {
-    background: rgba(#e57373, 0.1);
+    background: rgba($color-error, 0.1);
   }
 }
 

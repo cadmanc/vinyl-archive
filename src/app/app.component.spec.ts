@@ -71,7 +71,7 @@ describe('AppComponent', () => {
       expect(router.navigate).toHaveBeenCalledWith(['/sync']);
     });
 
-    it('should navigate to / when credentials and data exist', async () => {
+    it('should navigate to /collection when credentials and data exist', async () => {
       const router = spectator.inject(Router);
       const db = spectator.inject(DatabaseService);
       mockCredentialsService.hasCredentials.mockReturnValue(true);
@@ -80,7 +80,7 @@ describe('AppComponent', () => {
 
       await spectator.component.ngOnInit();
 
-      expect(router.navigate).toHaveBeenCalledWith(['/']);
+      expect(router.navigate).toHaveBeenCalledWith(['/collection']);
     });
 
     it('should resume master release service and initialize achievements for returning users', async () => {

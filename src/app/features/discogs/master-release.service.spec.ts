@@ -354,6 +354,334 @@ describe('MasterReleaseService', () => {
     });
   });
 
+  describe('resolveOriginalYear', () => {
+    it('resolves a 2015 AC/DC pressing to the master release year 1980', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      const acdcPressing = {
+        ...mockReleaseNeedingData,
+        basicInfo: {
+          ...mockReleaseNeedingData.basicInfo,
+          title: 'Back in Black',
+          artists: ['AC/DC'],
+          year: 2015,
+        },
+      };
+      db.getMetadata.mockResolvedValue(undefined);
+      http.get.mockReturnValue(
+        of({ id: 1000, year: 1980, title: 'Back in Black', resource_url: '' }),
+      );
+      db.updateRelease.mockResolvedValue(1);
+
+      const resultPromise = spectator.service.resolveOriginalYear(acdcPressing);
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS);
+
+      await expect(resultPromise).resolves.toBe('known');
+      expect(db.updateRelease).toHaveBeenCalledWith(123, {
+        basicInfo: { ...acdcPressing.basicInfo, originalYear: 1980 },
+      });
+      expect(db.setMetadata).toHaveBeenCalledWith('masterOriginalYear:1000', '1980');
+    });
+
+    it('uses cached known and unknown master years without an API request', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      db.getMetadata.mockImplementation(async (key: string) =>
+        key === 'masterOriginalYear:1000' ? '1980' : undefined,
+      );
+      await expect(spectator.service.resolveOriginalYear(mockReleaseNeedingData)).resolves.toBe(
+        'known',
+      );
+      expect(http.get).not.toHaveBeenCalled();
+
+      http.get.mockClear();
+      db.getMetadata.mockResolvedValue('none');
+      await expect(
+        spectator.service.resolveOriginalYear({ ...mockReleaseNeedingData, id: 999 }),
+      ).resolves.toBe('unknown');
+      expect(http.get).not.toHaveBeenCalled();
+    });
+
+    it('discovers and caches a missing master id from release details', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      const releaseWithoutMaster = { ...mockReleaseWithoutMasterId, id: 124 };
+      db.getMetadata.mockResolvedValue(undefined);
+      http.get
+        .mockReturnValueOnce(of({ id: 124, year: 2015, master_id: 1000 }))
+        .mockReturnValueOnce(
+          of({ id: 1000, year: 1980, title: 'Back in Black', resource_url: '' }),
+        );
+      db.updateRelease.mockResolvedValue(1);
+
+      const resultPromise = spectator.service.resolveOriginalYear(releaseWithoutMaster);
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS * 2);
+
+      await expect(resultPromise).resolves.toBe('known');
+      expect(http.get).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('/releases/124'),
+        expect.anything(),
+      );
+      expect(http.get).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('/masters/1000'),
+        expect.anything(),
+      );
+      expect(db.setMetadata).toHaveBeenCalledWith('releaseMasterId:124', '1000');
+    });
+
+    it('uses the earliest valid Discogs release year when the master has no year', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      db.getMetadata.mockResolvedValue(undefined);
+      http.get
+        .mockReturnValueOnce(of({ id: 1000, title: 'Album', resource_url: '' }))
+        .mockReturnValueOnce(of({ versions: [{ released: '1990' }, { released: '1989' }] }));
+      db.updateRelease.mockResolvedValue(1);
+
+      const resultPromise = spectator.service.resolveOriginalYear(mockReleaseNeedingData);
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS * 2);
+
+      await expect(resultPromise).resolves.toBe('known');
+      expect(db.updateRelease).toHaveBeenCalledWith(123, {
+        basicInfo: { ...mockReleaseNeedingData.basicInfo, originalYear: 1989 },
+      });
+    });
+
+    it.each([
+      ['AFI', 'Sing the Sorrow', 2003],
+      ['Billie Eilish', "Don't Smile at Me", 2017],
+      ['De La Soul', '3 Feet High and Rising', 1989],
+      ['Dr. Dre', 'The Chronic', 1992],
+      ['Frank Ocean', 'Blonde', 2016],
+      ['Eagles', 'Hotel California', 1976],
+    ])('uses MusicBrainz as the final fallback for %s - %s', async (artist, title, year) => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      const release = {
+        ...mockReleaseNeedingData,
+        basicInfo: { ...mockReleaseNeedingData.basicInfo, artists: [artist], title },
+      };
+      db.getMetadata.mockResolvedValue(undefined);
+      http.get
+        .mockReturnValueOnce(of({ id: 1000, title, resource_url: '' }))
+        .mockReturnValueOnce(of({ versions: [] }))
+        .mockReturnValueOnce(
+          of({
+            'release-groups': [
+              {
+                title,
+                score: 100,
+                'first-release-date': `${year}-01-01`,
+                'artist-credit': [{ name: artist }],
+              },
+            ],
+          }),
+        );
+      db.updateRelease.mockResolvedValue(1);
+
+      const resultPromise = spectator.service.resolveOriginalYear(release);
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS * 3);
+
+      await expect(resultPromise).resolves.toBe('known');
+      expect(db.setMetadata).toHaveBeenCalledWith(
+        expect.stringContaining('musicBrainz:'),
+        String(year),
+      );
+    });
+
+    it('matches MusicBrainz results after punctuation, article, and Discogs suffix normalization', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      const release = {
+        ...mockReleaseNeedingData,
+        basicInfo: {
+          ...mockReleaseNeedingData.basicInfo,
+          artists: ['The Beatles (2)'],
+          title: 'Abbey Road!',
+        },
+      };
+      db.getMetadata.mockResolvedValue(undefined);
+      http.get
+        .mockReturnValueOnce(of({ id: 1000, title: 'Abbey Road', resource_url: '' }))
+        .mockReturnValueOnce(of({ versions: [] }))
+        .mockReturnValueOnce(
+          of({
+            'release-groups': [
+              {
+                title: 'Abbey Road',
+                'first-release-date': '1969',
+                'artist-credit': [{ name: 'Beatles' }],
+              },
+            ],
+          }),
+        );
+      db.updateRelease.mockResolvedValue(1);
+
+      const resultPromise = spectator.service.resolveOriginalYear(release);
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS * 3);
+
+      await expect(resultPromise).resolves.toBe('known');
+    });
+
+    it('persists future Discogs metadata without changing the pressing year', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      db.getMetadata.mockResolvedValue(undefined);
+      http.get.mockReturnValueOnce(
+        of({
+          id: 1000,
+          year: 1980,
+          title: 'Album',
+          resource_url: '',
+        }),
+      );
+      db.updateRelease.mockResolvedValue(1);
+
+      const resultPromise = spectator.service.resolveOriginalYear({
+        ...mockReleaseNeedingData,
+        basicInfo: { ...mockReleaseNeedingData.basicInfo, year: 2015 },
+      });
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS);
+
+      await expect(resultPromise).resolves.toBe('known');
+      expect(db.updateRelease).toHaveBeenCalledWith(
+        123,
+        expect.objectContaining({
+          basicInfo: expect.objectContaining({ year: 2015, originalYear: 1980 }),
+        }),
+      );
+    });
+  });
+
+  describe('ensureReleaseMetadata', () => {
+    it('persists track count, complete runtime, label, catalog, and concise format', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      http.get.mockReturnValue(
+        of({
+          id: 123,
+          labels: [{ name: 'Atlantic', catno: 'SD 16018' }],
+          formats: [{ name: 'Vinyl', qty: '2', descriptions: ['LP', 'Reissue'] }],
+          tracklist: [
+            { position: '', title: 'Side A', type: 'heading' },
+            { position: 'A1', title: 'One', duration: '3:05' },
+            { position: 'A2', title: 'Two', duration: '4:10' },
+          ],
+        }),
+      );
+      db.updateRelease.mockResolvedValue(1);
+
+      const request = spectator.service.ensureReleaseMetadata(mockReleaseNeedingData);
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS);
+      await request;
+
+      expect(db.updateRelease).toHaveBeenCalledWith(123, {
+        basicInfo: expect.objectContaining({
+          trackCount: 2,
+          totalRuntimeSeconds: 435,
+          label: 'Atlantic',
+          catalogNumber: 'SD 16018',
+          format: '2×LP, Reissue',
+          tracklist: [
+            { position: '', title: 'Side A', type: 'heading' },
+            { position: 'A1', title: 'One', duration: '3:05' },
+            { position: 'A2', title: 'Two', duration: '4:10' },
+          ],
+        }),
+      });
+    });
+
+    it('does not estimate runtime when any track duration is missing', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      http.get.mockReturnValue(
+        of({
+          id: 123,
+          tracklist: [
+            { position: 'A1', title: 'One', duration: '3:05' },
+            { position: 'A2', title: 'Two' },
+          ],
+        }),
+      );
+      db.updateRelease.mockResolvedValue(1);
+
+      const request = spectator.service.ensureReleaseMetadata(mockReleaseNeedingData);
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS);
+      await request;
+
+      expect(db.updateRelease).toHaveBeenCalledWith(123, {
+        basicInfo: expect.not.objectContaining({ totalRuntimeSeconds: expect.anything() }),
+      });
+      expect(db.updateRelease).toHaveBeenCalledWith(123, {
+        basicInfo: expect.objectContaining({ trackCount: 2 }),
+      });
+    });
+  });
+
+  describe('startReleaseDetailEnrichment', () => {
+    it('backfills existing records, processes them sequentially, and reports progress', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      const secondRelease = { ...mockReleaseNeedingData, id: 124, instanceId: 457 };
+      db.getAllReleases.mockResolvedValue([mockReleaseNeedingData, secondRelease]);
+      http.get.mockReturnValue(of({ tracklist: [{ position: 'A1', title: 'Track' }] }));
+      db.updateRelease.mockResolvedValue(1);
+
+      const queue = spectator.service.startReleaseDetailEnrichment();
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS * 2);
+      await queue;
+
+      expect(http.get).toHaveBeenCalledTimes(2);
+      expect(http.get.mock.calls[0][0]).toContain('/releases/123');
+      expect(http.get.mock.calls[1][0]).toContain('/releases/124');
+      expect(spectator.service.releaseDetailProgress()).toEqual({
+        total: 2,
+        completed: 2,
+        inProgress: false,
+      });
+    });
+
+    it('does not fetch duplicate release IDs and skips already enriched records', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      const duplicate = { ...mockReleaseNeedingData, instanceId: 999 };
+      const enriched = {
+        ...mockReleaseNeedingData,
+        id: 125,
+        basicInfo: { ...mockReleaseNeedingData.basicInfo, tracklist: [], detailsFetched: true },
+      };
+      db.getAllReleases.mockResolvedValue([mockReleaseNeedingData, duplicate, enriched]);
+      http.get.mockReturnValue(of({ tracklist: [] }));
+      db.updateRelease.mockResolvedValue(1);
+
+      const queue = spectator.service.startReleaseDetailEnrichment();
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS);
+      await queue;
+
+      expect(http.get).toHaveBeenCalledTimes(1);
+      expect(http.get).toHaveBeenCalledWith(
+        expect.stringContaining('/releases/123'),
+        expect.anything(),
+      );
+      expect(spectator.service.releaseDetailProgress().total).toBe(3);
+      expect(spectator.service.releaseDetailProgress().completed).toBe(3);
+    });
+
+    it('starts the detail queue when the existing background sync entry point runs', async () => {
+      const db = spectator.inject(DatabaseService);
+      db.getAllReleases.mockResolvedValue([]);
+      db.getReleasesNeedingMasterData.mockResolvedValue([]);
+      db.getReleasesWithOriginalYearCount.mockResolvedValue(0);
+
+      await spectator.service.startBackgroundFetch();
+      await jest.advanceTimersByTimeAsync(0);
+
+      expect(db.getAllReleases).toHaveBeenCalled();
+    });
+  });
+
   describe('resumeIfNeeded', () => {
     it('should start fetch if pending releases exist', async () => {
       const consoleSpy = jest.spyOn(console, 'log').mockImplementation();

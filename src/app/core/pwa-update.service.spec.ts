@@ -75,7 +75,7 @@ describe('PwaUpdateService', () => {
     tick();
 
     expect(confirmSpy).toHaveBeenCalledWith(
-      'A new version of VinylTracker is available. Reload to update?',
+      'A new version of Vinyl Archive is available. Reload to update?',
     );
 
     confirmSpy.mockRestore();

@@ -1,0 +1,53 @@
+@use '../../../styles/variables' as *;
+@use '../../../styles/mixins' as *;
+
+.navigation-controls {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 10;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.search-button,
+.history-button,
+.stats-button,
+.achievements-button,
+.collection-button,
+.menu-button {
+  @include btn-header;
+}
+
+.collection-button.active {
+  background: $color-primary-dark;
+  box-shadow: inset 0 0 0 2px $color-primary;
+}
+
+.search-icon,
+.history-icon,
+.stats-icon,
+.achievements-icon {
+  font-size: 1.125rem;
+}
+
+.collection-label {
+  display: none;
+}
+
+@media (min-width: 36rem) {
+  .collection-button {
+    gap: 0.35rem;
+    padding-inline: 0.75rem;
+  }
+
+  .collection-label {
+    display: inline;
+    font-size: 0.8rem;
+  }
+}
+
+.menu-icon {
+  font-size: 1.5rem;
+  font-weight: bold;
+}
