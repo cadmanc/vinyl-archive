@@ -414,7 +414,7 @@ describe('MasterReleaseService', () => {
       expect(http.get).not.toHaveBeenCalled();
 
       http.get.mockClear();
-      db.getMetadata.mockResolvedValue('none');
+      db.getMetadata.mockResolvedValue('none:conclusive');
       await expect(
         spectator.service.resolveOriginalYear({ ...mockReleaseNeedingData, id: 999 }),
       ).resolves.toBe('unknown');
@@ -565,6 +565,79 @@ describe('MasterReleaseService', () => {
         expect.stringContaining('musicBrainz:'),
         expect.stringMatching(/^none:/),
       );
+    });
+
+    it('does not persist a transient Discogs failure as not found', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      db.getMetadata.mockResolvedValue(undefined);
+      http.get.mockReturnValue(throwError(() => new HttpErrorResponse({ status: 503 })));
+
+      const resultPromise = spectator.service.resolveOriginalYear(mockReleaseNeedingData);
+      await jest.advanceTimersByTimeAsync(30_000);
+
+      await expect(resultPromise).resolves.toBe('unknown');
+      expect(db.setMetadata).not.toHaveBeenCalledWith(
+        expect.stringContaining('masterOriginalYear:'),
+        'none:conclusive',
+      );
+      expect(db.setMetadata).not.toHaveBeenCalledWith(
+        expect.stringContaining('originalYear:'),
+        'none:conclusive',
+      );
+    });
+
+    it('keeps a genuinely unavailable original date unknown', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      db.getMetadata.mockResolvedValue(undefined);
+      http.get
+        .mockReturnValueOnce(of({ id: 1000, title: 'Album', resource_url: '' }))
+        .mockReturnValueOnce(of({ versions: [] }))
+        .mockReturnValueOnce(of({ 'release-groups': [] }));
+      db.updateRelease.mockResolvedValue(1);
+
+      const resultPromise = spectator.service.resolveOriginalYear(mockReleaseNeedingData);
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS * 6);
+
+      await expect(resultPromise).resolves.toBe('unknown');
+      expect(db.setMetadata).toHaveBeenCalledWith(
+        expect.stringContaining('originalYear:'),
+        'none:conclusive',
+      );
+      expect(db.updateRelease).not.toHaveBeenCalled();
+    });
+
+    it('backfills a release when its legacy missing-year cache is present', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      db.getMetadata.mockImplementation(async (key: string) =>
+        key.startsWith('originalYear:') ? 'none' : undefined,
+      );
+      http.get.mockReturnValueOnce(of({ id: 1000, year: 1980, title: 'Album', resource_url: '' }));
+      db.updateRelease.mockResolvedValue(1);
+
+      const resultPromise = spectator.service.resolveOriginalYear(mockReleaseNeedingData);
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS);
+
+      await expect(resultPromise).resolves.toBe('known');
+      expect(http.get).toHaveBeenCalledWith(
+        expect.stringContaining('/masters/1000'),
+        expect.anything(),
+      );
+    });
+
+    it('does not fetch a previously persisted original year after reload', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      const persisted = {
+        ...mockReleaseNeedingData,
+        basicInfo: { ...mockReleaseNeedingData.basicInfo, originalYear: 1980 },
+      };
+
+      await expect(spectator.service.resolveOriginalYear(persisted)).resolves.toBe('known');
+      expect(http.get).not.toHaveBeenCalled();
+      expect(db.getMetadata).not.toHaveBeenCalled();
     });
 
     it('persists future Discogs metadata without changing the pressing year', async () => {

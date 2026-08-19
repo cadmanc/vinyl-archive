@@ -40,6 +40,11 @@ interface MusicBrainzSearchResponse {
   'release-groups'?: MusicBrainzReleaseGroup[];
 }
 
+interface OriginalYearSourceResult {
+  year?: number;
+  retryable: boolean;
+}
+
 const MUSICBRAINZ_NOT_FOUND_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
 @Injectable({
@@ -52,7 +57,7 @@ export class MasterReleaseService {
   private readonly resolutionRequests = new Map<number, Promise<OriginalYearResolution>>();
   private readonly masterYearRequests = new Map<number, Promise<number | undefined>>();
   private readonly masterRequests = new Map<number, Promise<DiscogsMasterRelease | null>>();
-  private readonly albumYearRequests = new Map<string, Promise<number | undefined>>();
+  private readonly albumYearRequests = new Map<string, Promise<OriginalYearSourceResult>>();
   private readonly releaseMetadataRequests = new Map<number, Promise<boolean>>();
   private readonly completedReleaseMetadata = new Set<number>();
   private releaseDetailQueueRunning = false;
@@ -208,7 +213,7 @@ export class MasterReleaseService {
     try {
       const albumCacheKey = this.albumYearCacheKey(release);
       const cachedAlbumYear = await this.db.getMetadata(albumCacheKey);
-      if (cachedAlbumYear === 'none') return 'unknown';
+      if (cachedAlbumYear?.startsWith('none:conclusive')) return 'unknown';
       if (cachedAlbumYear?.startsWith('none:')) {
         const notFoundAt = Number(cachedAlbumYear.slice('none:'.length));
         if (
@@ -218,29 +223,28 @@ export class MasterReleaseService {
           return 'unknown';
         }
       }
-      if (cachedAlbumYear) {
-        const year = Number(cachedAlbumYear);
-        if (Number.isFinite(year)) {
-          await this.persistOriginalYear(release, year, release.basicInfo.masterId);
-          return 'known';
-        }
-      }
 
       const sharedAlbumRequest = this.albumYearRequests.get(albumCacheKey);
       if (sharedAlbumRequest) {
-        const year = await sharedAlbumRequest;
-        if (year != null) await this.persistOriginalYear(release, year, release.basicInfo.masterId);
-        return year != null ? 'known' : 'unknown';
+        const sourceResult = await sharedAlbumRequest;
+        if (sourceResult.year != null) {
+          await this.persistOriginalYear(release, sourceResult.year, release.basicInfo.masterId);
+          return 'known';
+        }
+        return 'unknown';
       }
 
       const resolutionRequest = this.resolveOriginalYearFromSources(release, albumCacheKey);
       this.albumYearRequests.set(albumCacheKey, resolutionRequest);
-      const year = await resolutionRequest;
+      const sourceResult = await resolutionRequest;
       this.albumYearRequests.delete(albumCacheKey);
-      if (year == null) {
-        await this.db.setMetadata(albumCacheKey, 'none');
+      if (sourceResult.year == null) {
+        if (!sourceResult.retryable) {
+          await this.db.setMetadata(albumCacheKey, 'none:conclusive');
+        }
         return 'unknown';
       }
+      const year = sourceResult.year;
       await this.db.setMetadata(albumCacheKey, String(year));
       await this.persistOriginalYear(release, year, release.basicInfo.masterId);
       return 'known';
@@ -253,24 +257,30 @@ export class MasterReleaseService {
   private async resolveOriginalYearFromSources(
     release: Release,
     albumCacheKey: string,
-  ): Promise<number | undefined> {
+  ): Promise<OriginalYearSourceResult> {
     let masterId = release.basicInfo.masterId;
     let releaseDetails: DiscogsReleaseDetails | null = null;
+    let masterLookupConclusive = false;
 
     if (!masterId) {
       const cachedMasterId = await this.db.getMetadata(this.releaseMasterCacheKey(release.id));
-      if (cachedMasterId === 'none') {
-        releaseDetails = null;
+      if (cachedMasterId === 'none:conclusive') {
+        masterLookupConclusive = true;
+      } else if (cachedMasterId === 'none') {
+        masterId = undefined;
       }
-      masterId = cachedMasterId ? Number(cachedMasterId) : undefined;
+      if (masterId == null && cachedMasterId && cachedMasterId !== 'none') {
+        masterId = Number(cachedMasterId);
+      }
     }
 
-    if (!masterId) {
+    if (!masterId && !masterLookupConclusive) {
       releaseDetails = await this.fetchReleaseDetails(release.id);
+      if (!releaseDetails) return { retryable: true };
       masterId = releaseDetails?.master_id;
       await this.db.setMetadata(
         this.releaseMasterCacheKey(release.id),
-        masterId ? String(masterId) : 'none',
+        masterId ? String(masterId) : 'none:conclusive',
       );
 
       if (masterId) {
@@ -279,10 +289,15 @@ export class MasterReleaseService {
     }
 
     let year: number | undefined;
+    let discogsRetryable = false;
     if (masterId) {
       const cachedYear = await this.db.getMetadata(this.masterYearCacheKey(masterId));
-      year = cachedYear && cachedYear !== 'none' ? Number(cachedYear) : undefined;
-      if (cachedYear !== 'none' && !Number.isFinite(year)) {
+      year =
+        cachedYear && !cachedYear.startsWith('none:') && cachedYear !== 'none'
+          ? Number(cachedYear)
+          : undefined;
+      if (cachedYear === 'none:conclusive') return { retryable: false };
+      if (!Number.isFinite(year)) {
         let request = this.masterYearRequests.get(masterId);
         if (!request) {
           request = this.fetchMasterRelease(masterId).then((master) => master?.year);
@@ -292,24 +307,40 @@ export class MasterReleaseService {
             () => this.masterYearRequests.delete(masterId),
           );
         }
-        year = await request;
+        try {
+          year = await request;
+        } catch (error) {
+          console.error(`Failed to resolve Discogs master ${masterId}:`, error);
+          discogsRetryable = true;
+        }
         if (year != null)
           await this.db.setMetadata(this.masterYearCacheKey(masterId), String(year));
       }
 
-      if (cachedYear !== 'none' && !Number.isFinite(year)) {
-        year = await this.fetchEarliestMasterReleaseYear(masterId);
-        await this.db.setMetadata(
-          this.masterYearCacheKey(masterId),
-          year != null ? String(year) : 'none',
-        );
+      if (!Number.isFinite(year)) {
+        try {
+          year = await this.fetchEarliestMasterReleaseYear(masterId);
+        } catch (error) {
+          console.error(`Failed to resolve Discogs master versions ${masterId}:`, error);
+          discogsRetryable = true;
+        }
+        if (!discogsRetryable) {
+          await this.db.setMetadata(
+            this.masterYearCacheKey(masterId),
+            year != null ? String(year) : 'none:conclusive',
+          );
+        }
       }
     }
 
     if (year == null || !Number.isFinite(year)) {
-      year = await this.fetchMusicBrainzYear(release, albumCacheKey);
+      const musicBrainzResult = await this.fetchMusicBrainzYear(release, albumCacheKey);
+      return {
+        ...musicBrainzResult,
+        retryable: discogsRetryable || musicBrainzResult.retryable,
+      };
     }
-    return year;
+    return { year, retryable: false };
   }
 
   private async persistOriginalYear(
@@ -389,7 +420,7 @@ export class MasterReleaseService {
       return years.length ? Math.min(...years) : undefined;
     } catch (error) {
       console.error(`Failed to fetch versions for master ${masterId}:`, error);
-      return undefined;
+      throw error;
     }
   }
 
@@ -472,6 +503,7 @@ export class MasterReleaseService {
 
     const request = this.fetchMasterReleaseWithRetry(masterId, maxRetries);
     this.masterRequests.set(masterId, request);
+    void request.catch(() => this.masterRequests.delete(masterId));
     return request;
   }
 
@@ -495,7 +527,7 @@ export class MasterReleaseService {
       } catch (error) {
         if (attempt === maxRetries) {
           console.error(`Failed to fetch master ${masterId} after ${maxRetries} attempts:`, error);
-          return null;
+          throw error;
         }
         // Wait before retrying (exponential backoff: 2s, 4s, 8s...)
         const retryDelay = DISCOGS_API_DELAY_MS * Math.pow(2, attempt);
@@ -526,10 +558,10 @@ export class MasterReleaseService {
   private async fetchMusicBrainzYear(
     release: Release,
     albumCacheKey: string,
-  ): Promise<number | undefined> {
+  ): Promise<OriginalYearSourceResult> {
     const cached = await this.db.getMetadata(`musicBrainz:${albumCacheKey}`);
-    if (cached === 'none') return undefined;
-    if (cached) return this.parseYear(cached);
+    if (cached === 'none') return { retryable: false };
+    if (cached) return { year: this.parseYear(cached), retryable: false };
 
     const artists = release.basicInfo.artists
       .map((artist) => this.normalizeMatchText(artist))
@@ -552,14 +584,15 @@ export class MasterReleaseService {
         .filter((group) => this.musicBrainzMatches(group, release))
         .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))[0];
       const year = this.parseYear(match?.['first-release-date']);
-      await this.db.setMetadata(
-        `musicBrainz:${albumCacheKey}`,
-        year != null ? String(year) : `none:${Date.now()}`,
-      );
-      return year;
+      if (year != null) {
+        await this.db.setMetadata(`musicBrainz:${albumCacheKey}`, String(year));
+        return { year, retryable: false };
+      }
+      await this.db.setMetadata(`musicBrainz:${albumCacheKey}`, `none:${Date.now()}`);
+      return { retryable: false };
     } catch (error) {
       console.error(`Failed to fetch MusicBrainz data for ${release.basicInfo.title}:`, error);
-      return undefined;
+      return { retryable: true };
     }
   }
 
