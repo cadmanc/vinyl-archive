@@ -1,6 +1,6 @@
 import { Injectable, signal, computed } from '@angular/core';
-import { HttpClient, HttpHeaders } from '@angular/common/http';
-import { firstValueFrom, Subject } from 'rxjs';
+import { HttpHeaders } from '@angular/common/http';
+import { Subject } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { DatabaseService } from '../../core/database.service';
 import { CredentialsService } from '../../core/credentials.service';
@@ -13,6 +13,7 @@ import {
 } from './discogs-api.model';
 import { DISCOGS_API_DELAY_MS } from '../../shared/constants/timing.constants';
 import { DiscogsRequestScheduler } from './discogs-request-scheduler.service';
+import { MusicBrainzRequestScheduler } from './musicbrainz-request-scheduler.service';
 
 export interface MasterFetchProgress {
   total: number;
@@ -38,6 +39,8 @@ interface MusicBrainzReleaseGroup {
 interface MusicBrainzSearchResponse {
   'release-groups'?: MusicBrainzReleaseGroup[];
 }
+
+const MUSICBRAINZ_NOT_FOUND_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
 @Injectable({
   providedIn: 'root',
@@ -71,10 +74,10 @@ export class MasterReleaseService {
   readonly releaseDetailProgress = this.releaseDetailProgressSignal.asReadonly();
 
   constructor(
-    private http: HttpClient,
     private db: DatabaseService,
     private credentialsService: CredentialsService,
     private requestScheduler: DiscogsRequestScheduler,
+    private musicBrainzScheduler: MusicBrainzRequestScheduler,
   ) {}
 
   private get token(): string {
@@ -206,6 +209,15 @@ export class MasterReleaseService {
       const albumCacheKey = this.albumYearCacheKey(release);
       const cachedAlbumYear = await this.db.getMetadata(albumCacheKey);
       if (cachedAlbumYear === 'none') return 'unknown';
+      if (cachedAlbumYear?.startsWith('none:')) {
+        const notFoundAt = Number(cachedAlbumYear.slice('none:'.length));
+        if (
+          Number.isFinite(notFoundAt) &&
+          Date.now() - notFoundAt < MUSICBRAINZ_NOT_FOUND_COOLDOWN_MS
+        ) {
+          return 'unknown';
+        }
+      }
       if (cachedAlbumYear) {
         const year = Number(cachedAlbumYear);
         if (Number.isFinite(year)) {
@@ -524,26 +536,25 @@ export class MasterReleaseService {
       .join(' ');
     const title = this.normalizeMatchText(release.basicInfo.title);
     const query = `artist:"${artists}" AND releasegroup:"${title}"`;
-    const url = `${this.musicBrainzApiUrl}/release-group/`;
+    const url = `${this.musicBrainzApiUrl}?path=/release-group/`;
     const headers = new HttpHeaders({
       Accept: 'application/json',
     });
 
     try {
-      const response = await firstValueFrom(
-        this.http.get<MusicBrainzSearchResponse>(url, {
-          headers,
-          params: { query, fmt: 'json', limit: '20' },
-        }),
+      const response = await this.musicBrainzScheduler.request<MusicBrainzSearchResponse>(
+        `originalYear:${albumCacheKey}`,
+        url,
+        { headers, params: { query, fmt: 'json', limit: '20' } },
       );
       await this.delay(DISCOGS_API_DELAY_MS);
-      const match = (response['release-groups'] ?? [])
+      const match = (response.body?.['release-groups'] ?? [])
         .filter((group) => this.musicBrainzMatches(group, release))
         .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))[0];
       const year = this.parseYear(match?.['first-release-date']);
       await this.db.setMetadata(
         `musicBrainz:${albumCacheKey}`,
-        year != null ? String(year) : 'none',
+        year != null ? String(year) : `none:${Date.now()}`,
       );
       return year;
     } catch (error) {

@@ -1,5 +1,5 @@
 import { createServiceFactory, SpectatorService } from '@ngneat/spectator/jest';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { of, throwError, NEVER } from 'rxjs';
 import { MasterReleaseService } from './master-release.service';
 import { DatabaseService } from '../../core/database.service';
@@ -501,9 +501,12 @@ describe('MasterReleaseService', () => {
       db.updateRelease.mockResolvedValue(1);
 
       const resultPromise = spectator.service.resolveOriginalYear(release);
-      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS * 3);
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS * 6);
 
       await expect(resultPromise).resolves.toBe('known');
+      const musicBrainzRequest = http.get.mock.calls[2];
+      expect(musicBrainzRequest[0]).toContain('/api/musicbrainz?path=/release-group/');
+      expect(musicBrainzRequest[1].headers.get('User-Agent')).toBeNull();
       expect(db.setMetadata).toHaveBeenCalledWith(
         expect.stringContaining('musicBrainz:'),
         String(year),
@@ -539,9 +542,29 @@ describe('MasterReleaseService', () => {
       db.updateRelease.mockResolvedValue(1);
 
       const resultPromise = spectator.service.resolveOriginalYear(release);
-      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS * 3);
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS * 6);
 
       await expect(resultPromise).resolves.toBe('known');
+    });
+
+    it('does not persist a transient MusicBrainz 503 as not found', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      db.getMetadata.mockResolvedValue(undefined);
+      const unavailable = new HttpErrorResponse({ status: 503 });
+      http.get
+        .mockReturnValueOnce(of({ id: 1000, title: 'Album', resource_url: '' }))
+        .mockReturnValueOnce(of({ versions: [] }))
+        .mockReturnValueOnce(throwError(() => unavailable));
+
+      const resultPromise = spectator.service.resolveOriginalYear(mockReleaseNeedingData);
+      await jest.advanceTimersByTimeAsync(20_000);
+
+      await expect(resultPromise).resolves.toBe('unknown');
+      expect(db.setMetadata).not.toHaveBeenCalledWith(
+        expect.stringContaining('musicBrainz:'),
+        expect.stringMatching(/^none:/),
+      );
     });
 
     it('persists future Discogs metadata without changing the pressing year', async () => {
