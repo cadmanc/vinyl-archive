@@ -48,7 +48,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return;
   }
 
-  const authorization = queryValue(req.headers.authorization);
+  const serverToken = process.env.DISCOGS_TOKEN?.trim();
+  const authorization = serverToken
+    ? `Discogs token=${serverToken}`
+    : queryValue(req.headers.authorization);
   const upstreamUrl = new URL(path, DISCOGS_API_URL);
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(req.query)) {

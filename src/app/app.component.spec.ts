@@ -9,7 +9,7 @@ import { AchievementsService } from './features/achievements/achievements.servic
 
 describe('AppComponent', () => {
   let spectator: Spectator<AppComponent>;
-  let mockCredentialsService: { hasCredentials: jest.Mock };
+  let mockCredentialsService: { hasCredentials: jest.Mock; setServerUsername: jest.Mock };
 
   const createComponent = createComponentFactory({
     component: AppComponent,
@@ -21,6 +21,7 @@ describe('AppComponent', () => {
         useFactory: () => {
           mockCredentialsService = {
             hasCredentials: jest.fn().mockReturnValue(false),
+            setServerUsername: jest.fn(),
           };
           return mockCredentialsService;
         },

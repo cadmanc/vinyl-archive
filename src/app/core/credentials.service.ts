@@ -6,12 +6,16 @@ import { DiscogsCredentials, CREDENTIALS_STORAGE_KEY } from './credentials.model
 })
 export class CredentialsService {
   private credentialsSignal = signal<DiscogsCredentials | null>(this.loadCredentials());
+  private serverUsernameSignal = signal<string | null>(null);
 
   readonly credentials = this.credentialsSignal.asReadonly();
 
   readonly hasCredentials = computed(() => {
     const creds = this.credentialsSignal();
-    return creds !== null && creds.username.length > 0 && creds.token.length > 0;
+    return (
+      this.serverUsernameSignal() !== null ||
+      (creds !== null && creds.username.length > 0 && creds.token.length > 0)
+    );
   });
 
   constructor() {}
@@ -20,7 +24,7 @@ export class CredentialsService {
    * Get the stored username
    */
   getUsername(): string | null {
-    return this.credentialsSignal()?.username ?? null;
+    return this.serverUsernameSignal() ?? this.credentialsSignal()?.username ?? null;
   }
 
   /**
@@ -28,6 +32,10 @@ export class CredentialsService {
    */
   getToken(): string | null {
     return this.credentialsSignal()?.token ?? null;
+  }
+
+  setServerUsername(username: string | null): void {
+    this.serverUsernameSignal.set(username?.trim() || null);
   }
 
   /**

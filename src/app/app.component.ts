@@ -5,6 +5,7 @@ import { CredentialsService } from './core/credentials.service';
 import { MasterReleaseService } from './features/discogs/master-release.service';
 import { PwaUpdateService } from './core/pwa-update.service';
 import { AchievementsService } from './features/achievements/achievements.service';
+import { DiscogsConfigService } from './core/discogs-config.service';
 
 @Component({
   selector: 'app-root',
@@ -19,6 +20,7 @@ export class AppComponent implements OnInit {
     private masterReleaseService: MasterReleaseService,
     private pwaUpdateService: PwaUpdateService,
     private achievementsService: AchievementsService,
+    private discogsConfigService: DiscogsConfigService,
     private router: Router,
   ) {}
 
@@ -28,6 +30,11 @@ export class AppComponent implements OnInit {
   }
 
   private async navigateBasedOnState() {
+    const serverConfig = await this.discogsConfigService.load();
+    this.credentialsService.setServerUsername(
+      serverConfig.configured ? (serverConfig.username ?? null) : null,
+    );
+
     if (!this.credentialsService.hasCredentials()) {
       this.router.navigate(['/setup']);
       return;
