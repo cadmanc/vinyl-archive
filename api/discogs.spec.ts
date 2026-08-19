@@ -1,6 +1,12 @@
 import handler from './discogs';
+import apiPackage from './package.json';
 
 describe('Discogs proxy', () => {
+  it('loads under the Vercel ESM module boundary', () => {
+    expect(apiPackage.type).toBe('module');
+    expect(handler).toEqual(expect.any(Function));
+  });
+
   const createUpstreamResponse = (body: unknown, status: number) => ({
     status,
     headers: { get: () => 'application/json' },
