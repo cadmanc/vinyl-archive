@@ -1,4 +1,4 @@
-import { readCatalog } from './catalog.repository';
+import { readCatalog } from './catalog.repository.js';
 
 type VercelRequest = {
   method?: string;
