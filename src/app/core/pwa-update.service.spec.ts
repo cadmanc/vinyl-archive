@@ -60,6 +60,33 @@ describe('PwaUpdateService', () => {
     expect(swUpdateMock.checkForUpdate).toHaveBeenCalledTimes(1);
   }));
 
+  it('removes only the retired Discogs artwork caches', async () => {
+    const keysMock = jest
+      .fn()
+      .mockResolvedValue(['ngsw:data:discogs-images', 'ngsw:assets', 'app-cache']);
+    const deleteMock = jest.fn().mockResolvedValue(true);
+    Object.defineProperty(globalThis, 'caches', {
+      configurable: true,
+      value: { keys: keysMock, delete: deleteMock },
+    });
+    Object.defineProperty(window, 'caches', {
+      configurable: true,
+      value: { keys: keysMock, delete: deleteMock },
+    });
+
+    await (
+      service as unknown as {
+        removeLegacyDiscogsImageCaches: () => Promise<void>;
+      }
+    ).removeLegacyDiscogsImageCaches();
+
+    expect(deleteMock).toHaveBeenCalledWith('ngsw:data:discogs-images');
+    expect(deleteMock).not.toHaveBeenCalledWith('ngsw:assets');
+    expect(deleteMock).not.toHaveBeenCalledWith('app-cache');
+    Object.defineProperty(globalThis, 'caches', { configurable: true, value: undefined });
+    Object.defineProperty(window, 'caches', { configurable: true, value: undefined });
+  });
+
   it('should prompt user when new version is ready', fakeAsync(() => {
     const confirmSpy = jest.spyOn(window, 'confirm').mockReturnValue(false);
 

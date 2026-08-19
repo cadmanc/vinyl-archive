@@ -34,17 +34,5 @@
         ]
       }
     }
-  ],
-  "dataGroups": [
-    {
-      "name": "discogs-images",
-      "urls": ["https://i.discogs.com/**"],
-      "cacheConfig": {
-        "maxSize": 200,
-        "maxAge": "30d",
-        "strategy": "freshness",
-        "timeout": "5s"
-      }
-    }
   ]
 }

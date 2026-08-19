@@ -21,6 +21,7 @@ export class PwaUpdateService {
       return;
     }
 
+    void this.removeLegacyDiscogsImageCaches();
     this.setupPeriodicUpdateCheck();
 
     this.swUpdate.versionUpdates
@@ -28,6 +29,21 @@ export class PwaUpdateService {
       .subscribe(() => {
         this.promptUserToUpdate();
       });
+  }
+
+  private async removeLegacyDiscogsImageCaches(): Promise<void> {
+    if (typeof caches === 'undefined') return;
+
+    try {
+      const cacheNames = await caches.keys();
+      await Promise.all(
+        cacheNames
+          .filter((cacheName) => cacheName.includes('discogs-images'))
+          .map((cacheName) => caches.delete(cacheName)),
+      );
+    } catch {
+      // Cache cleanup is best effort and must not affect application startup.
+    }
   }
 
   private setupPeriodicUpdateCheck(): void {
