@@ -12,6 +12,7 @@ import {
   conciseDiscogsFormat,
 } from './discogs-api.model';
 import { DISCOGS_API_DELAY_MS } from '../../shared/constants/timing.constants';
+import { DiscogsRequestScheduler } from './discogs-request-scheduler.service';
 
 export interface MasterFetchProgress {
   total: number;
@@ -47,8 +48,10 @@ export class MasterReleaseService {
   private abortController: AbortController | null = null;
   private readonly resolutionRequests = new Map<number, Promise<OriginalYearResolution>>();
   private readonly masterYearRequests = new Map<number, Promise<number | undefined>>();
+  private readonly masterRequests = new Map<number, Promise<DiscogsMasterRelease | null>>();
   private readonly albumYearRequests = new Map<string, Promise<number | undefined>>();
   private readonly releaseMetadataRequests = new Map<number, Promise<boolean>>();
+  private readonly completedReleaseMetadata = new Set<number>();
   private releaseDetailQueueRunning = false;
   readonly releaseDetailUpdated = new Subject<number>();
 
@@ -71,6 +74,7 @@ export class MasterReleaseService {
     private http: HttpClient,
     private db: DatabaseService,
     private credentialsService: CredentialsService,
+    private requestScheduler: DiscogsRequestScheduler,
   ) {}
 
   private get token(): string {
@@ -182,13 +186,17 @@ export class MasterReleaseService {
 
   async ensureReleaseMetadata(release: Release): Promise<boolean> {
     if (release.basicInfo.detailsFetched === true) return true;
+    if (this.completedReleaseMetadata.has(release.id)) return true;
 
     const existingRequest = this.releaseMetadataRequests.get(release.id);
     if (existingRequest) return existingRequest;
 
-    const request = this.fetchAndPersistReleaseMetadata(release).finally(() => {
-      this.releaseMetadataRequests.delete(release.id);
-    });
+    const request = this.fetchAndPersistReleaseMetadata(release)
+      .then((enriched) => {
+        if (enriched) this.completedReleaseMetadata.add(release.id);
+        return enriched;
+      })
+      .finally(() => this.releaseMetadataRequests.delete(release.id));
     this.releaseMetadataRequests.set(release.id, request);
     return request;
   }
@@ -359,11 +367,11 @@ export class MasterReleaseService {
       Authorization: `Discogs token=${this.token}`,
     });
     try {
-      const response = await firstValueFrom(
-        this.http.get<DiscogsMasterVersionsResponse>(url, { headers }),
-      );
+      const response = await this.requestScheduler.request<DiscogsMasterVersionsResponse>(url, {
+        headers,
+      });
       await this.delay(DISCOGS_API_DELAY_MS);
-      const years = (response.versions ?? [])
+      const years = (response.body?.versions ?? [])
         .map((version) => this.parseYear(version.released))
         .filter((year): year is number => year != null);
       return years.length ? Math.min(...years) : undefined;
@@ -447,6 +455,18 @@ export class MasterReleaseService {
     masterId: number,
     maxRetries = 3,
   ): Promise<DiscogsMasterRelease | null> {
+    const existingRequest = this.masterRequests.get(masterId);
+    if (existingRequest) return existingRequest;
+
+    const request = this.fetchMasterReleaseWithRetry(masterId, maxRetries);
+    this.masterRequests.set(masterId, request);
+    return request;
+  }
+
+  private async fetchMasterReleaseWithRetry(
+    masterId: number,
+    maxRetries: number,
+  ): Promise<DiscogsMasterRelease | null> {
     const url = this.discogsUrl(`/masters/${masterId}`);
     const headers = new HttpHeaders({
       Authorization: `Discogs token=${this.token}`,
@@ -454,11 +474,12 @@ export class MasterReleaseService {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const response = await firstValueFrom(
-          this.http.get<DiscogsMasterRelease>(url, { headers }),
-        );
+        const response = await this.requestScheduler.request<DiscogsMasterRelease>(url, {
+          headers,
+          label: `master ${masterId}`,
+        });
         await this.delay(DISCOGS_API_DELAY_MS);
-        return response;
+        return response.body as DiscogsMasterRelease;
       } catch (error) {
         if (attempt === maxRetries) {
           console.error(`Failed to fetch master ${masterId} after ${maxRetries} attempts:`, error);
@@ -481,9 +502,9 @@ export class MasterReleaseService {
     });
 
     try {
-      const response = await firstValueFrom(this.http.get<DiscogsReleaseDetails>(url, { headers }));
+      const response = await this.requestScheduler.request<DiscogsReleaseDetails>(url, { headers });
       await this.delay(DISCOGS_API_DELAY_MS);
-      return response;
+      return response.body as DiscogsReleaseDetails;
     } catch (error) {
       console.error(`Failed to fetch release details for ${releaseId}:`, error);
       return null;

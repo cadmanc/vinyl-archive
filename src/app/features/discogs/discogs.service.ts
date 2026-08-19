@@ -1,6 +1,5 @@
 import { Injectable } from '@angular/core';
-import { HttpClient, HttpHeaders } from '@angular/common/http';
-import { firstValueFrom } from 'rxjs';
+import { HttpHeaders } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import { DatabaseService } from '../../core/database.service';
 import { PlayHistoryService } from '../player/play-history.service';
@@ -12,6 +11,7 @@ import {
   DiscogsRelease,
 } from './discogs-api.model';
 import { DISCOGS_API_DELAY_MS } from '../../shared/constants/timing.constants';
+import { DiscogsRequestScheduler } from './discogs-request-scheduler.service';
 
 @Injectable({
   providedIn: 'root',
@@ -20,10 +20,10 @@ export class DiscogsService {
   private apiUrl = environment.discogsApiUrl;
 
   constructor(
-    private http: HttpClient,
     private db: DatabaseService,
     private playHistoryService: PlayHistoryService,
     private credentialsService: CredentialsService,
+    private requestScheduler: DiscogsRequestScheduler,
   ) {}
 
   private get username(): string {
@@ -163,10 +163,11 @@ export class DiscogsService {
     };
 
     try {
-      const response = await firstValueFrom(
-        this.http.get<DiscogsCollectionResponse>(url, { headers, params }),
-      );
-      return response;
+      const response = await this.requestScheduler.request<DiscogsCollectionResponse>(url, {
+        headers,
+        params,
+      });
+      return response.body as DiscogsCollectionResponse;
     } catch (error) {
       console.error(`Failed to fetch page ${page}:`, error);
       throw error;

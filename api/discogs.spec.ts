@@ -71,6 +71,27 @@ describe('Discogs proxy', () => {
     expect(response.send).toHaveBeenCalledWith(body);
   });
 
+  it('forwards Discogs rate limit headers', async () => {
+    const headers = new Map([
+      ['content-type', 'application/json'],
+      ['retry-after', '5'],
+      ['x-discogs-ratelimit', '60'],
+      ['x-discogs-ratelimit-remaining', '0'],
+      ['x-discogs-ratelimit-used', '60'],
+    ]);
+    mockFetch({
+      status: 429,
+      headers: { get: (name: string) => headers.get(name) ?? null },
+      text: async () => JSON.stringify({ message: 'rate limited' }),
+    });
+    const response = createResponse();
+
+    await handler({ method: 'GET', query: { path: '/masters/456' }, headers: {} }, response);
+
+    expect(response.setHeader).toHaveBeenCalledWith('retry-after', '5');
+    expect(response.setHeader).toHaveBeenCalledWith('x-discogs-ratelimit-remaining', '0');
+  });
+
   it.each([429, 500, 502, 503, 504])('preserves upstream status %s', async (status) => {
     mockFetch(createUpstreamResponse({ message: 'upstream failure' }, status));
     const response = createResponse();

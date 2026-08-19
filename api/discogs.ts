@@ -1,6 +1,12 @@
 const DISCOGS_API_URL = 'https://api.discogs.com';
 const DISCOGS_USER_AGENT = 'VinylArchive/1.0';
 const REQUEST_TIMEOUT_MS = 10_000;
+const FORWARDED_HEADERS = [
+  'retry-after',
+  'x-discogs-ratelimit',
+  'x-discogs-ratelimit-remaining',
+  'x-discogs-ratelimit-used',
+];
 
 type VercelRequest = {
   method?: string;
@@ -67,6 +73,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     const body = await upstreamResponse.text();
     const contentType = upstreamResponse.headers.get('content-type');
     if (contentType) res.setHeader('Content-Type', contentType);
+    for (const header of FORWARDED_HEADERS) {
+      const value = upstreamResponse.headers.get(header);
+      if (value) res.setHeader(header, value);
+    }
     res.status(upstreamResponse.status).send(responseBody(contentType, body));
   } catch (error) {
     const status = error instanceof DOMException && error.name === 'AbortError' ? 504 : 502;

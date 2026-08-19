@@ -97,6 +97,22 @@ describe('MasterReleaseService', () => {
   });
 
   describe('startBackgroundFetch', () => {
+    it('deduplicates master requests shared by multiple releases', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      const secondRelease = { ...mockReleaseNeedingData, id: 124, instanceId: 457 };
+      db.getReleasesNeedingMasterData.mockResolvedValue([mockReleaseNeedingData, secondRelease]);
+      db.getReleasesWithOriginalYearCount.mockResolvedValue(0);
+      http.get.mockReturnValue(of(mockMasterResponse));
+      db.updateRelease.mockResolvedValue(1);
+
+      spectator.service.startBackgroundFetch();
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS * 4);
+
+      expect(http.get).toHaveBeenCalledTimes(1);
+      expect(db.updateRelease).toHaveBeenCalledTimes(2);
+    });
+
     it('should not start if already in progress', async () => {
       const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
       const db = spectator.inject(DatabaseService);
