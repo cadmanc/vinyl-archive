@@ -167,11 +167,14 @@ describe('MasterReleaseService', () => {
       await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS);
 
       expect(http.get).toHaveBeenCalledWith(
-        expect.stringContaining('/masters/1000'),
+        expect.stringContaining('/api/discogs?path=/masters/1000'),
         expect.objectContaining({
           headers: expect.anything(),
         }),
       );
+      const request = http.get.mock.calls[0][1];
+      expect(request.headers.get('Authorization')).toBe('Discogs token=testtoken');
+      expect(request.headers.get('User-Agent')).toBeNull();
 
       expect(db.updateRelease).toHaveBeenCalledWith(123, {
         basicInfo: {
@@ -579,6 +582,7 @@ describe('MasterReleaseService', () => {
 
       expect(db.updateRelease).toHaveBeenCalledWith(123, {
         basicInfo: expect.objectContaining({
+          detailsFetched: true,
           trackCount: 2,
           totalRuntimeSeconds: 435,
           label: 'Atlantic',
@@ -667,6 +671,25 @@ describe('MasterReleaseService', () => {
       );
       expect(spectator.service.releaseDetailProgress().total).toBe(3);
       expect(spectator.service.releaseDetailProgress().completed).toBe(3);
+    });
+
+    it('does not re-enqueue completed records after a reload', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      const completedRelease = {
+        ...mockReleaseNeedingData,
+        basicInfo: { ...mockReleaseNeedingData.basicInfo, detailsFetched: true },
+      };
+      db.getAllReleases.mockResolvedValue([completedRelease]);
+
+      await spectator.service.startReleaseDetailEnrichment();
+
+      expect(http.get).not.toHaveBeenCalled();
+      expect(spectator.service.releaseDetailProgress()).toEqual({
+        total: 1,
+        completed: 1,
+        inProgress: false,
+      });
     });
 
     it('starts the detail queue when the existing background sync entry point runs', async () => {

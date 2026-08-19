@@ -1,5 +1,5 @@
 export const environment = {
   production: false,
-  discogsApiUrl: 'https://api.discogs.com',
+  discogsApiUrl: '/api/discogs',
   musicBrainzApiUrl: 'https://musicbrainz.org/ws/2',
 };

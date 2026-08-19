@@ -150,10 +150,11 @@ export class DiscogsService {
    * Fetch a single page of collection data from Discogs API
    */
   private async fetchCollectionPage(page: number): Promise<DiscogsCollectionResponse> {
-    const url = `${this.apiUrl}/users/${this.username}/collection/folders/0/releases`;
+    const url = this.discogsUrl(
+      `/users/${encodeURIComponent(this.username)}/collection/folders/0/releases`,
+    );
     const headers = new HttpHeaders({
       Authorization: `Discogs token=${this.token}`,
-      'User-Agent': 'DiscogsTracker/1.0',
     });
 
     const params = {
@@ -170,6 +171,10 @@ export class DiscogsService {
       console.error(`Failed to fetch page ${page}:`, error);
       throw error;
     }
+  }
+
+  private discogsUrl(path: string): string {
+    return `${this.apiUrl}?path=${path}`;
   }
 
   /**

@@ -192,7 +192,7 @@ describe('DiscogsService', () => {
       await spectator.service.syncCollection();
 
       expect(http.get).toHaveBeenCalledWith(
-        expect.stringContaining('/users/'),
+        expect.stringContaining('/api/discogs?path=/users/'),
         expect.objectContaining({
           headers: expect.objectContaining({
             lazyInit: expect.any(Function),
@@ -203,6 +203,9 @@ describe('DiscogsService', () => {
           }),
         }),
       );
+      const request = http.get.mock.calls[0][1];
+      expect(request.headers.get('Authorization')).toBe('Discogs token=testtoken');
+      expect(request.headers.get('User-Agent')).toBeNull();
     });
 
     it('should handle multiple pages', async () => {

@@ -354,10 +354,9 @@ export class MasterReleaseService {
   }
 
   private async fetchEarliestMasterReleaseYear(masterId: number): Promise<number | undefined> {
-    const url = `${this.apiUrl}/masters/${masterId}/versions`;
+    const url = this.discogsUrl(`/masters/${masterId}/versions`);
     const headers = new HttpHeaders({
       Authorization: `Discogs token=${this.token}`,
-      'User-Agent': 'VinylTracker/1.0',
     });
     try {
       const response = await firstValueFrom(
@@ -448,10 +447,9 @@ export class MasterReleaseService {
     masterId: number,
     maxRetries = 3,
   ): Promise<DiscogsMasterRelease | null> {
-    const url = `${this.apiUrl}/masters/${masterId}`;
+    const url = this.discogsUrl(`/masters/${masterId}`);
     const headers = new HttpHeaders({
       Authorization: `Discogs token=${this.token}`,
-      'User-Agent': 'VinylTracker/1.0',
     });
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -477,10 +475,9 @@ export class MasterReleaseService {
   }
 
   private async fetchReleaseDetails(releaseId: number): Promise<DiscogsReleaseDetails | null> {
-    const url = `${this.apiUrl}/releases/${releaseId}`;
+    const url = this.discogsUrl(`/releases/${releaseId}`);
     const headers = new HttpHeaders({
       Authorization: `Discogs token=${this.token}`,
-      'User-Agent': 'VinylTracker/1.0',
     });
 
     try {
@@ -509,7 +506,6 @@ export class MasterReleaseService {
     const url = `${this.musicBrainzApiUrl}/release-group/`;
     const headers = new HttpHeaders({
       Accept: 'application/json',
-      'User-Agent': 'VinylTracker/1.0 (vinyl-tracker@example.invalid)',
     });
 
     try {
@@ -596,5 +592,9 @@ export class MasterReleaseService {
 
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private discogsUrl(path: string): string {
+    return `${this.apiUrl}?path=${path}`;
   }
 }
