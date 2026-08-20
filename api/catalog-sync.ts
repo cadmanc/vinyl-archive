@@ -151,6 +151,15 @@ function isEnrichment(value: unknown): value is ReleaseEnrichment {
   );
 }
 
+function normalizeEnrichmentRequest(body: unknown): unknown {
+  if (!isRecord(body) || !isRecord(body.enrichment) || body.enrichment.year !== 0) {
+    return body;
+  }
+
+  const { year: _unknownYear, ...enrichment } = body.enrichment;
+  return { ...body, enrichment };
+}
+
 function isEnrichmentRequest(
   body: unknown,
 ): body is { releaseId: number; enrichment: ReleaseEnrichment } {
@@ -176,13 +185,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   }
 
   try {
-    if (isEnrichmentRequest(req.body)) {
+    const normalizedBody = normalizeEnrichmentRequest(req.body);
+    if (isEnrichmentRequest(normalizedBody)) {
       const catalog = await readCatalog();
-      if (!catalog.releases.some((release) => release.id === req.body.releaseId)) {
+      if (!catalog.releases.some((release) => release.id === normalizedBody.releaseId)) {
         res.status(404).json({ error: 'Release is not in the server catalog' });
         return;
       }
-      await updateCatalogRelease(req.body.releaseId, req.body.enrichment);
+      await updateCatalogRelease(normalizedBody.releaseId, normalizedBody.enrichment);
       res.status(200).json({ ok: true });
       return;
     }

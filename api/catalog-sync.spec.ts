@@ -110,6 +110,53 @@ describe('catalog sync API', () => {
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
+  it('accepts unknown year zero without persisting it alongside valid enrichment', async () => {
+    const res = response();
+    readCatalogMock.mockResolvedValue({
+      schemaVersion: 1,
+      updatedAt: '',
+      releases: [
+        { id: 123, instanceId: 10, basicInfo: { title: 'Album', artists: [], formats: [] } },
+      ],
+    });
+
+    await handler(
+      {
+        method: 'POST',
+        body: {
+          releaseId: 123,
+          enrichment: {
+            year: 0,
+            originalYear: 1968,
+            masterId: 456,
+            label: 'Example Records',
+            catalogNumber: 'EX-123',
+            format: 'LP',
+            detailsFetched: true,
+            trackCount: 1,
+            totalRuntimeSeconds: 243,
+            tracklist: [{ position: 'A1', title: 'Track', duration: '4:03' }],
+          },
+        },
+      },
+      res,
+    );
+
+    expect(updateCatalogReleaseMock).toHaveBeenCalledWith(123, {
+      originalYear: 1968,
+      masterId: 456,
+      label: 'Example Records',
+      catalogNumber: 'EX-123',
+      format: 'LP',
+      detailsFetched: true,
+      trackCount: 1,
+      totalRuntimeSeconds: 243,
+      tracklist: [{ position: 'A1', title: 'Track', duration: '4:03' }],
+    });
+    expect(updateCatalogReleaseMock.mock.calls[0]?.[1]).not.toHaveProperty('year', 0);
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
   it('rejects enrichment that tries to overwrite arbitrary catalog fields', async () => {
     const res = response();
 
