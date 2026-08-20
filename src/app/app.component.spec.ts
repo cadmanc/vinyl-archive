@@ -6,6 +6,8 @@ import { CredentialsService } from './core/credentials.service';
 import { MasterReleaseService } from './features/discogs/master-release.service';
 import { PwaUpdateService } from './core/pwa-update.service';
 import { AchievementsService } from './features/achievements/achievements.service';
+import { CatalogService } from './core/catalog.service';
+import { DiscogsConfigService } from './core/discogs-config.service';
 
 describe('AppComponent', () => {
   let spectator: Spectator<AppComponent>;
@@ -13,7 +15,15 @@ describe('AppComponent', () => {
 
   const createComponent = createComponentFactory({
     component: AppComponent,
-    mocks: [DatabaseService, MasterReleaseService, PwaUpdateService, AchievementsService],
+    detectChanges: false,
+    mocks: [
+      DatabaseService,
+      MasterReleaseService,
+      PwaUpdateService,
+      AchievementsService,
+      CatalogService,
+      DiscogsConfigService,
+    ],
     providers: [
       provideRouter([]),
       {
@@ -31,6 +41,8 @@ describe('AppComponent', () => {
 
   beforeEach(() => {
     spectator = createComponent();
+    spectator.inject(DiscogsConfigService).load.mockResolvedValue({ configured: false });
+    spectator.inject(CatalogService).load.mockResolvedValue(null);
     const router = spectator.inject(Router);
     jest.spyOn(router, 'navigate').mockResolvedValue(true);
   });
@@ -61,10 +73,68 @@ describe('AppComponent', () => {
       expect(router.navigate).toHaveBeenCalledWith(['/setup']);
     });
 
+    it('should load an existing server catalog before deciding whether to sync', async () => {
+      const router = spectator.inject(Router);
+      const db = spectator.inject(DatabaseService);
+      const config = spectator.inject(DiscogsConfigService);
+      const catalogService = spectator.inject(CatalogService);
+      mockCredentialsService.hasCredentials.mockReturnValue(true);
+      config.load.mockResolvedValue({ configured: true, username: 'server-user' });
+      catalogService.load.mockResolvedValue({
+        schemaVersion: 1,
+        updatedAt: '2026-08-20T00:00:00.000Z',
+        releases: [
+          {
+            id: 1,
+            instanceId: 10,
+            basicInfo: { title: 'Album', artists: ['Artist'], formats: ['LP'] },
+          },
+        ],
+      });
+      db.getCollectionCount.mockResolvedValue(0);
+
+      await spectator.component.ngOnInit();
+
+      expect(db.addRelease).toHaveBeenCalled();
+      expect(router.navigate).toHaveBeenCalledWith(['/collection']);
+    });
+
+    it('should synchronize an empty configured catalog and bypass /sync', async () => {
+      const router = spectator.inject(Router);
+      const db = spectator.inject(DatabaseService);
+      const config = spectator.inject(DiscogsConfigService);
+      const catalogService = spectator.inject(CatalogService);
+      mockCredentialsService.hasCredentials.mockReturnValue(true);
+      config.load.mockResolvedValue({ configured: true, username: 'server-user' });
+      catalogService.load
+        .mockResolvedValueOnce({ schemaVersion: 1, updatedAt: '', releases: [] })
+        .mockResolvedValueOnce({
+          schemaVersion: 1,
+          updatedAt: '2026-08-20T00:00:00.000Z',
+          releases: [
+            {
+              id: 2,
+              instanceId: 20,
+              basicInfo: { title: 'Synced Album', artists: ['Artist'], formats: ['LP'] },
+            },
+          ],
+        });
+      db.getCollectionCount.mockResolvedValue(0);
+
+      await spectator.component.ngOnInit();
+
+      expect(catalogService.write).toHaveBeenCalledWith();
+      expect(db.addRelease).toHaveBeenCalled();
+      expect(router.navigate).toHaveBeenCalledWith(['/collection']);
+      expect(router.navigate).not.toHaveBeenCalledWith(['/sync']);
+    });
+
     it('should navigate to /sync when credentials exist but no data', async () => {
       const router = spectator.inject(Router);
       const db = spectator.inject(DatabaseService);
+      const config = spectator.inject(DiscogsConfigService);
       mockCredentialsService.hasCredentials.mockReturnValue(true);
+      config.load.mockResolvedValue({ configured: false });
       db.getCollectionCount.mockResolvedValue(0);
 
       await spectator.component.ngOnInit();

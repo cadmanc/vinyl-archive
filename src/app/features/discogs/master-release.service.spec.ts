@@ -781,8 +781,8 @@ describe('MasterReleaseService', () => {
         expect.stringContaining('/releases/123'),
         expect.anything(),
       );
-      expect(spectator.service.releaseDetailProgress().total).toBe(3);
-      expect(spectator.service.releaseDetailProgress().completed).toBe(3);
+      expect(spectator.service.releaseDetailProgress().total).toBe(1);
+      expect(spectator.service.releaseDetailProgress().completed).toBe(1);
     });
 
     it('does not re-enqueue completed records after a reload', async () => {
@@ -798,8 +798,8 @@ describe('MasterReleaseService', () => {
 
       expect(http.get).not.toHaveBeenCalled();
       expect(spectator.service.releaseDetailProgress()).toEqual({
-        total: 1,
-        completed: 1,
+        total: 0,
+        completed: 0,
         inProgress: false,
       });
     });

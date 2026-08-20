@@ -1,4 +1,4 @@
-import { Injectable, signal, computed } from '@angular/core';
+import { Injectable, signal, computed, Optional } from '@angular/core';
 import { HttpHeaders } from '@angular/common/http';
 import { Subject } from 'rxjs';
 import { environment } from '../../../environments/environment';
@@ -14,6 +14,7 @@ import {
 import { DISCOGS_API_DELAY_MS } from '../../shared/constants/timing.constants';
 import { DiscogsRequestScheduler } from './discogs-request-scheduler.service';
 import { MusicBrainzRequestScheduler } from './musicbrainz-request-scheduler.service';
+import { CatalogService } from '../../core/catalog.service';
 
 export interface MasterFetchProgress {
   total: number;
@@ -83,6 +84,7 @@ export class MasterReleaseService {
     private credentialsService: CredentialsService,
     private requestScheduler: DiscogsRequestScheduler,
     private musicBrainzScheduler: MusicBrainzRequestScheduler,
+    @Optional() private catalogService?: CatalogService,
   ) {}
 
   private get token(): string {
@@ -165,8 +167,8 @@ export class MasterReleaseService {
       const pending = allReleases.filter((release) => release.basicInfo.detailsFetched !== true);
       const uniquePending = [...new Map(pending.map((release) => [release.id, release])).values()];
       this.releaseDetailProgressSignal.set({
-        total: allReleases.length,
-        completed: allReleases.length - uniquePending.length,
+        total: uniquePending.length,
+        completed: 0,
         inProgress: uniquePending.length > 0,
       });
 
@@ -353,6 +355,7 @@ export class MasterReleaseService {
     await this.db.updateRelease(release.id, {
       basicInfo: { ...basicInfo, ...(masterId ? { masterId } : {}), originalYear: year },
     });
+    await this.persistCatalog();
   }
 
   private async updateReleaseDetails(
@@ -391,6 +394,7 @@ export class MasterReleaseService {
         : {}),
     });
     await this.db.updateRelease(release.id, { basicInfo });
+    await this.persistCatalog();
   }
 
   private async fetchAndPersistReleaseMetadata(release: Release): Promise<boolean> {
@@ -402,6 +406,15 @@ export class MasterReleaseService {
       details.master_id ?? release.basicInfo.masterId,
     );
     return true;
+  }
+
+  private async persistCatalog(): Promise<void> {
+    if (!this.catalogService) return;
+    try {
+      await this.catalogService.write();
+    } catch (error) {
+      console.error('Failed to persist enriched catalog:', error);
+    }
   }
 
   private async fetchEarliestMasterReleaseYear(masterId: number): Promise<number | undefined> {

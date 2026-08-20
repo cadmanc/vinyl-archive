@@ -12,6 +12,8 @@ import {
 } from './discogs-api.model';
 import { DISCOGS_API_DELAY_MS } from '../../shared/constants/timing.constants';
 import { DiscogsRequestScheduler } from './discogs-request-scheduler.service';
+import { CatalogRelease, CatalogService } from '../../core/catalog.service';
+import { Optional } from '@angular/core';
 
 @Injectable({
   providedIn: 'root',
@@ -24,6 +26,7 @@ export class DiscogsService {
     private playHistoryService: PlayHistoryService,
     private credentialsService: CredentialsService,
     private requestScheduler: DiscogsRequestScheduler,
+    @Optional() private catalogService?: CatalogService,
   ) {}
 
   private get username(): string {
@@ -67,21 +70,26 @@ export class DiscogsService {
       const firstPage = await this.fetchCollectionPage(1);
       const totalPages = firstPage.pagination.pages;
       const totalItems = firstPage.pagination.items;
+      const catalog = await this.catalogService?.load();
+      const catalogById = new Map(catalog?.releases.map((release) => [release.id, release]) ?? []);
+      const currentIds = new Set<number>();
 
       console.log(`Found ${totalItems} items across ${totalPages} pages`);
 
       // Process first page
-      await this.processReleases(firstPage.releases);
+      await this.processReleases(firstPage.releases, catalogById, currentIds);
 
       // Fetch remaining pages
       for (let page = 2; page <= totalPages; page++) {
         console.log(`Fetching page ${page} of ${totalPages}...`);
         const pageData = await this.fetchCollectionPage(page);
-        await this.processReleases(pageData.releases);
+        await this.processReleases(pageData.releases, catalogById, currentIds);
 
         // Respect rate limits - Discogs allows 60 requests per minute
         await this.delay(DISCOGS_API_DELAY_MS);
       }
+
+      await this.persistCatalog();
 
       await this.db.setLastSyncDate(new Date());
       const finalCount = await this.db.getCollectionCount();
@@ -181,9 +189,18 @@ export class DiscogsService {
   /**
    * Convert Discogs API releases to our Release model and store in database
    */
-  private async processReleases(discogsReleases: DiscogsRelease[]): Promise<void> {
+  private async processReleases(
+    discogsReleases: DiscogsRelease[],
+    catalogById: Map<number, CatalogRelease>,
+    currentIds: Set<number>,
+  ): Promise<void> {
     for (const discogsRelease of discogsReleases) {
       const release: Release = this.convertToRelease(discogsRelease);
+      currentIds.add(release.id);
+      const persisted = catalogById.get(release.id);
+      if (persisted) {
+        release.basicInfo = { ...release.basicInfo, ...persisted.basicInfo };
+      }
 
       // Check if release already exists
       const existing = await this.db.getRelease(release.id);
@@ -200,6 +217,15 @@ export class DiscogsService {
         // New release, add with default tracking values
         await this.db.addRelease(release);
       }
+    }
+  }
+
+  private async persistCatalog(): Promise<void> {
+    if (!this.catalogService) return;
+    try {
+      await this.catalogService.write();
+    } catch (error) {
+      console.error('Failed to persist server catalog:', error);
     }
   }
 }
