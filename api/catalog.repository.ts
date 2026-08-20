@@ -1,6 +1,6 @@
 import { get, put } from '@vercel/blob';
 import { TextDecoder } from 'node:util';
-import type { Release } from '../src/app/shared/models/release.model';
+import type { Release, ReleaseEnrichment } from '../src/app/shared/models/release.model';
 
 export const CATALOG_PATHNAME = 'vinyl-archive/catalog.json';
 export const CATALOG_SCHEMA_VERSION = 1;
@@ -85,4 +85,21 @@ export async function writeCatalog(releases: CatalogRelease[]): Promise<CatalogD
     contentType: 'application/json',
   });
   return catalog;
+}
+
+export async function updateCatalogRelease(
+  releaseId: number,
+  enrichment: ReleaseEnrichment,
+): Promise<CatalogDocument | null> {
+  const catalog = await readCatalog();
+  const release = catalog.releases.find((candidate) => candidate.id === releaseId);
+  if (!release) return null;
+
+  return writeCatalog(
+    catalog.releases.map((candidate) =>
+      candidate.id === releaseId
+        ? { ...candidate, basicInfo: { ...candidate.basicInfo, ...enrichment } }
+        : candidate,
+    ),
+  );
 }

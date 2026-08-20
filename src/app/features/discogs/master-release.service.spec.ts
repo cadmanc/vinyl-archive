@@ -4,6 +4,7 @@ import { of, throwError, NEVER } from 'rxjs';
 import { MasterReleaseService } from './master-release.service';
 import { DatabaseService } from '../../core/database.service';
 import { CredentialsService } from '../../core/credentials.service';
+import { CatalogService } from '../../core/catalog.service';
 import { Release } from '../../shared/models/release.model';
 import { DISCOGS_API_DELAY_MS } from '../../shared/constants/timing.constants';
 
@@ -15,7 +16,7 @@ describe('MasterReleaseService', () => {
 
   const createService = createServiceFactory({
     service: MasterReleaseService,
-    mocks: [HttpClient, DatabaseService],
+    mocks: [HttpClient, DatabaseService, CatalogService],
     providers: [
       {
         provide: CredentialsService,
@@ -709,6 +710,43 @@ describe('MasterReleaseService', () => {
       });
     });
 
+    it('persists enriched detail metadata and the completion marker', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      const catalog = spectator.inject(CatalogService);
+      const enrichedRelease = {
+        ...mockReleaseNeedingData,
+        basicInfo: {
+          ...mockReleaseNeedingData.basicInfo,
+          detailsFetched: true,
+          trackCount: 1,
+          tracklist: [{ position: 'A1', title: 'Track' }],
+          label: 'Atlantic',
+          originalYear: 1968,
+        },
+      };
+      http.get.mockReturnValue(of({ tracklist: [{ position: 'A1', title: 'Track' }] }));
+      db.updateRelease.mockResolvedValue(1);
+      db.getRelease.mockResolvedValue(enrichedRelease);
+
+      const request = spectator.service.ensureReleaseMetadata(mockReleaseNeedingData);
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS);
+      await request;
+
+      expect(catalog.writeEnrichment).toHaveBeenCalledWith(
+        123,
+        expect.objectContaining({
+          detailsFetched: true,
+          trackCount: 1,
+          tracklist: [{ position: 'A1', title: 'Track' }],
+          label: 'Atlantic',
+          originalYear: 1968,
+          masterId: 1000,
+          year: 2020,
+        }),
+      );
+    });
+
     it('does not estimate runtime when any track duration is missing', async () => {
       const db = spectator.inject(DatabaseService);
       const http = spectator.inject(HttpClient);
@@ -759,6 +797,21 @@ describe('MasterReleaseService', () => {
       });
     });
 
+    it('treats a missing release result as an empty collection', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      db.getAllReleases.mockResolvedValue(undefined);
+
+      await spectator.service.startReleaseDetailEnrichment();
+
+      expect(http.get).not.toHaveBeenCalled();
+      expect(spectator.service.releaseDetailProgress()).toEqual({
+        total: 0,
+        completed: 0,
+        inProgress: false,
+      });
+    });
+
     it('does not fetch duplicate release IDs and skips already enriched records', async () => {
       const db = spectator.inject(DatabaseService);
       const http = spectator.inject(HttpClient);
@@ -802,6 +855,37 @@ describe('MasterReleaseService', () => {
         completed: 0,
         inProgress: false,
       });
+    });
+
+    it('keeps completed writes when a later release fails', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      const catalog = spectator.inject(CatalogService);
+      const secondRelease = { ...mockReleaseNeedingData, id: 124, instanceId: 457 };
+      db.getAllReleases.mockResolvedValue([mockReleaseNeedingData, secondRelease]);
+      db.updateRelease.mockResolvedValue(1);
+      db.getRelease.mockResolvedValue({
+        ...mockReleaseNeedingData,
+        basicInfo: {
+          ...mockReleaseNeedingData.basicInfo,
+          detailsFetched: true,
+          trackCount: 1,
+          tracklist: [{ position: 'A1', title: 'Track' }],
+        },
+      });
+      http.get
+        .mockReturnValueOnce(of({ tracklist: [{ position: 'A1', title: 'Track' }] }))
+        .mockReturnValue(throwError(() => new Error('network failure')));
+
+      const queue = spectator.service.startReleaseDetailEnrichment();
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS * 20);
+      await queue;
+
+      expect(catalog.writeEnrichment).toHaveBeenCalledWith(
+        123,
+        expect.objectContaining({ detailsFetched: true, trackCount: 1 }),
+      );
+      expect(catalog.writeEnrichment).toHaveBeenCalledTimes(1);
     });
 
     it('starts the detail queue when the existing background sync entry point runs', async () => {

@@ -1,6 +1,12 @@
 import { get, put } from '@vercel/blob';
 import { ReadableStream } from 'node:stream/web';
-import { CATALOG_PATHNAME, emptyCatalog, readCatalog, writeCatalog } from './catalog.repository';
+import {
+  CATALOG_PATHNAME,
+  emptyCatalog,
+  readCatalog,
+  updateCatalogRelease,
+  writeCatalog,
+} from './catalog.repository';
 
 jest.mock('@vercel/blob', () => ({
   get: jest.fn(),
@@ -68,6 +74,43 @@ describe('catalog repository', () => {
         allowOverwrite: true,
         contentType: 'application/json',
       }),
+    );
+  });
+
+  it('merges enrichment without replacing the server catalog release', async () => {
+    getMock.mockResolvedValue({
+      stream: streamOf(
+        JSON.stringify({
+          schemaVersion: 1,
+          updatedAt: '',
+          releases: [
+            {
+              id: 123,
+              instanceId: 456,
+              basicInfo: { title: 'Album', artists: ['Artist'], formats: ['LP'] },
+            },
+          ],
+        }),
+      ),
+    } as never);
+    putMock.mockResolvedValue({} as never);
+
+    await updateCatalogRelease(123, {
+      detailsFetched: true,
+      trackCount: 1,
+      tracklist: [{ position: 'A1', title: 'Track' }],
+      originalYear: 1968,
+    });
+
+    expect(putMock).toHaveBeenCalledWith(
+      CATALOG_PATHNAME,
+      expect.stringContaining('"detailsFetched":true'),
+      expect.anything(),
+    );
+    expect(putMock).toHaveBeenCalledWith(
+      CATALOG_PATHNAME,
+      expect.stringContaining('"originalYear":1968'),
+      expect.anything(),
     );
   });
 });

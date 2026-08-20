@@ -5,6 +5,20 @@ export interface ReleaseTrack {
   type?: string;
 }
 
+export type ReleaseEnrichment = Pick<
+  Release['basicInfo'],
+  | 'masterId'
+  | 'originalYear'
+  | 'year'
+  | 'label'
+  | 'catalogNumber'
+  | 'format'
+  | 'tracklist'
+  | 'detailsFetched'
+  | 'trackCount'
+  | 'totalRuntimeSeconds'
+>;
+
 export interface Release {
   id: number; // Discogs release ID (primary key)
   instanceId: number; // Discogs collection instance ID

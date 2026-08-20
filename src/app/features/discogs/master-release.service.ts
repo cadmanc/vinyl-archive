@@ -4,7 +4,7 @@ import { Subject } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { DatabaseService } from '../../core/database.service';
 import { CredentialsService } from '../../core/credentials.service';
-import { Release, ReleaseTrack } from '../../shared/models/release.model';
+import { Release, ReleaseEnrichment, ReleaseTrack } from '../../shared/models/release.model';
 import {
   DiscogsMasterRelease,
   DiscogsMasterVersionsResponse,
@@ -163,7 +163,7 @@ export class MasterReleaseService {
     this.releaseDetailQueueRunning = true;
 
     try {
-      const allReleases = await this.db.getAllReleases();
+      const allReleases = (await this.db.getAllReleases()) ?? [];
       const pending = allReleases.filter((release) => release.basicInfo.detailsFetched !== true);
       const uniquePending = [...new Map(pending.map((release) => [release.id, release])).values()];
       this.releaseDetailProgressSignal.set({
@@ -355,7 +355,7 @@ export class MasterReleaseService {
     await this.db.updateRelease(release.id, {
       basicInfo: { ...basicInfo, ...(masterId ? { masterId } : {}), originalYear: year },
     });
-    await this.persistCatalog();
+    await this.persistEnrichment(release.id);
   }
 
   private async updateReleaseDetails(
@@ -394,7 +394,7 @@ export class MasterReleaseService {
         : {}),
     });
     await this.db.updateRelease(release.id, { basicInfo });
-    await this.persistCatalog();
+    await this.persistEnrichment(release.id);
   }
 
   private async fetchAndPersistReleaseMetadata(release: Release): Promise<boolean> {
@@ -408,10 +408,37 @@ export class MasterReleaseService {
     return true;
   }
 
-  private async persistCatalog(): Promise<void> {
+  private async persistEnrichment(releaseId: number): Promise<void> {
     if (!this.catalogService) return;
     try {
-      await this.catalogService.write();
+      const release = await this.db.getRelease(releaseId);
+      if (release) {
+        const {
+          masterId,
+          originalYear,
+          year,
+          label,
+          catalogNumber,
+          format,
+          tracklist,
+          detailsFetched,
+          trackCount,
+          totalRuntimeSeconds,
+        } = release.basicInfo;
+        const enrichment: ReleaseEnrichment = {
+          ...(masterId !== undefined ? { masterId } : {}),
+          ...(originalYear !== undefined ? { originalYear } : {}),
+          ...(year !== undefined ? { year } : {}),
+          ...(label !== undefined ? { label } : {}),
+          ...(catalogNumber !== undefined ? { catalogNumber } : {}),
+          ...(format !== undefined ? { format } : {}),
+          ...(tracklist !== undefined ? { tracklist } : {}),
+          ...(detailsFetched !== undefined ? { detailsFetched } : {}),
+          ...(trackCount !== undefined ? { trackCount } : {}),
+          ...(totalRuntimeSeconds !== undefined ? { totalRuntimeSeconds } : {}),
+        };
+        await this.catalogService.writeEnrichment(releaseId, enrichment);
+      }
     } catch (error) {
       console.error('Failed to persist enriched catalog:', error);
     }

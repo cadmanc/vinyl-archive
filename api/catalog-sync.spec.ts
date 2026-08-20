@@ -1,12 +1,14 @@
 import handler from './catalog-sync';
-import { readCatalog, writeCatalog } from './catalog.repository';
+import { readCatalog, updateCatalogRelease, writeCatalog } from './catalog.repository';
 
 jest.mock('./catalog.repository', () => ({
   readCatalog: jest.fn(),
+  updateCatalogRelease: jest.fn(),
   writeCatalog: jest.fn(),
 }));
 
 const readCatalogMock = jest.mocked(readCatalog);
+const updateCatalogReleaseMock = jest.mocked(updateCatalogRelease);
 const writeCatalogMock = jest.mocked(writeCatalog);
 
 describe('catalog sync API', () => {
@@ -71,6 +73,64 @@ describe('catalog sync API', () => {
     expect(writeCatalogMock).not.toHaveBeenCalledWith(
       expect.arrayContaining([expect.objectContaining({ id: 999 })]),
     );
+  });
+
+  it('persists only validated enrichment for a release already in the server catalog', async () => {
+    const res = response();
+    readCatalogMock.mockResolvedValue({
+      schemaVersion: 1,
+      updatedAt: '',
+      releases: [
+        { id: 123, instanceId: 10, basicInfo: { title: 'Album', artists: [], formats: [] } },
+      ],
+    });
+
+    await handler(
+      {
+        method: 'POST',
+        body: {
+          releaseId: 123,
+          enrichment: {
+            detailsFetched: true,
+            trackCount: 1,
+            tracklist: [{ position: 'A1', title: 'Track' }],
+            originalYear: 1968,
+          },
+        },
+      },
+      res,
+    );
+
+    expect(updateCatalogReleaseMock).toHaveBeenCalledWith(123, {
+      detailsFetched: true,
+      trackCount: 1,
+      tracklist: [{ position: 'A1', title: 'Track' }],
+      originalYear: 1968,
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('rejects enrichment that tries to overwrite arbitrary catalog fields', async () => {
+    const res = response();
+
+    await handler(
+      {
+        method: 'POST',
+        body: {
+          releaseId: 123,
+          enrichment: {
+            detailsFetched: true,
+            trackCount: 0,
+            tracklist: [],
+            title: 'Attacker supplied title',
+          },
+        },
+      },
+      res,
+    );
+
+    expect(updateCatalogReleaseMock).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
   });
 
   it('never returns server secrets', async () => {

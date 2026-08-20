@@ -1,8 +1,14 @@
-import { readCatalog, writeCatalog, type CatalogRelease } from './catalog.repository.js';
+import {
+  readCatalog,
+  updateCatalogRelease,
+  writeCatalog,
+  type CatalogRelease,
+} from './catalog.repository.js';
+import type { ReleaseEnrichment } from '../src/app/shared/models/release.model.js';
 
 const DISCOGS_API_URL = 'https://api.discogs.com';
 
-type VercelRequest = { method?: string };
+type VercelRequest = { method?: string; body?: unknown };
 type VercelResponse = {
   status: (statusCode: number) => VercelResponse;
   setHeader: (name: string, value: string) => VercelResponse;
@@ -69,6 +75,93 @@ async function fetchCollectionPage(username: string, token: string, page: number
   return (await response.json()) as DiscogsCollectionResponse;
 }
 
+const ENRICHMENT_KEYS = new Set<keyof ReleaseEnrichment>([
+  'masterId',
+  'originalYear',
+  'year',
+  'label',
+  'catalogNumber',
+  'format',
+  'tracklist',
+  'detailsFetched',
+  'trackCount',
+  'totalRuntimeSeconds',
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isEnrichment(value: unknown): value is ReleaseEnrichment {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).some((key) => !ENRICHMENT_KEYS.has(key as keyof ReleaseEnrichment))
+  ) {
+    return false;
+  }
+  if (value.detailsFetched !== undefined && value.detailsFetched !== true) return false;
+  if (value.detailsFetched === undefined && value.originalYear === undefined) return false;
+  if (value.masterId !== undefined && (!Number.isInteger(value.masterId) || value.masterId <= 0)) {
+    return false;
+  }
+  if (
+    value.originalYear !== undefined &&
+    (!Number.isInteger(value.originalYear) || value.originalYear < 1800)
+  ) {
+    return false;
+  }
+  if (value.year !== undefined && (!Number.isInteger(value.year) || value.year < 1800)) {
+    return false;
+  }
+  if (
+    value.trackCount !== undefined &&
+    (!Number.isInteger(value.trackCount) || value.trackCount < 0)
+  ) {
+    return false;
+  }
+  if (
+    value.totalRuntimeSeconds !== undefined &&
+    (!Number.isInteger(value.totalRuntimeSeconds) || value.totalRuntimeSeconds < 0)
+  ) {
+    return false;
+  }
+  if (
+    (value.label !== undefined && typeof value.label !== 'string') ||
+    (value.catalogNumber !== undefined && typeof value.catalogNumber !== 'string') ||
+    (value.format !== undefined && typeof value.format !== 'string')
+  ) {
+    return false;
+  }
+  if (
+    value.detailsFetched === true &&
+    (!Array.isArray(value.tracklist) || value.trackCount === undefined)
+  ) {
+    return false;
+  }
+  return (
+    value.tracklist === undefined ||
+    value.tracklist.every(
+      (track) =>
+        isRecord(track) &&
+        typeof track.position === 'string' &&
+        typeof track.title === 'string' &&
+        (track.duration === undefined || typeof track.duration === 'string') &&
+        (track.type === undefined || typeof track.type === 'string'),
+    )
+  );
+}
+
+function isEnrichmentRequest(
+  body: unknown,
+): body is { releaseId: number; enrichment: ReleaseEnrichment } {
+  return (
+    isRecord(body) &&
+    Number.isInteger(body.releaseId) &&
+    body.releaseId > 0 &&
+    isEnrichment(body.enrichment)
+  );
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST').status(405).json({ error: 'Method not allowed' });
@@ -83,6 +176,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   }
 
   try {
+    if (isEnrichmentRequest(req.body)) {
+      const catalog = await readCatalog();
+      if (!catalog.releases.some((release) => release.id === req.body.releaseId)) {
+        res.status(404).json({ error: 'Release is not in the server catalog' });
+        return;
+      }
+      await updateCatalogRelease(req.body.releaseId, req.body.enrichment);
+      res.status(200).json({ ok: true });
+      return;
+    }
+    if (req.body !== undefined) {
+      res.status(400).json({ error: 'Invalid catalog enrichment request' });
+      return;
+    }
+
     const existing = await readCatalog();
     const firstPage = await fetchCollectionPage(username, token, 1);
     const items = [...firstPage.releases];
