@@ -6,7 +6,7 @@ import { MasterReleaseService } from './features/discogs/master-release.service'
 import { PwaUpdateService } from './core/pwa-update.service';
 import { AchievementsService } from './features/achievements/achievements.service';
 import { DiscogsConfigService } from './core/discogs-config.service';
-import { CatalogRelease, CatalogService } from './core/catalog.service';
+import { CatalogDocument, CatalogRelease, CatalogService } from './core/catalog.service';
 import { Release } from './shared/models/release.model';
 
 @Component({
@@ -44,6 +44,7 @@ export class AppComponent implements OnInit {
     }
 
     let catalog = await this.catalogService.load();
+    const hadPopulatedCatalog = Boolean(catalog?.releases.length);
     if (!catalog?.releases.length && serverConfig.configured) {
       try {
         await this.catalogService.write();
@@ -82,6 +83,36 @@ export class AppComponent implements OnInit {
     const releases = await this.db.getAllReleases();
     this.achievementsService.initialize(releases);
     this.router.navigate(['/collection']);
+
+    if (serverConfig.configured && hadPopulatedCatalog && catalog?.releases.length) {
+      void this.reconcileCatalog(catalog);
+    }
+  }
+
+  private async reconcileCatalog(previousCatalog: CatalogDocument): Promise<void> {
+    try {
+      await this.catalogService.write();
+      const refreshedCatalog = await this.catalogService.load();
+      if (!refreshedCatalog) return;
+
+      const knownIds = new Set(previousCatalog.releases.map((release) => release.id));
+      const localReleases = (await this.db.getAllReleases()) ?? [];
+      const localIds = new Set(localReleases.map((release) => release.id));
+      const addedReleases: Release[] = [];
+
+      for (const stored of refreshedCatalog.releases) {
+        if (knownIds.has(stored.id) || localIds.has(stored.id)) continue;
+        const release = this.catalogReleaseToRelease(stored);
+        await this.db.addRelease(release);
+        addedReleases.push(release);
+      }
+
+      if (addedReleases.length) {
+        void this.masterReleaseService.startReleaseDetailEnrichmentFor(addedReleases);
+      }
+    } catch (error) {
+      console.error('Failed to reconcile the server catalog in the background:', error);
+    }
   }
 
   private catalogReleaseToRelease(stored: CatalogRelease): Release {

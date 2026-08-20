@@ -194,6 +194,22 @@ export class MasterReleaseService {
     }
   }
 
+  async startReleaseDetailEnrichmentFor(releases: Release[]): Promise<void> {
+    for (const release of releases) {
+      if (release.basicInfo.detailsFetched === true) {
+        this.releaseDetailUpdated.next(release.id);
+        continue;
+      }
+
+      try {
+        await this.ensureReleaseMetadata(release);
+      } catch (error) {
+        console.error(`Failed to enrich release ${release.id}:`, error);
+      }
+      this.releaseDetailUpdated.next(release.id);
+    }
+  }
+
   async ensureReleaseMetadata(release: Release): Promise<boolean> {
     if (release.basicInfo.detailsFetched === true) return true;
     if (this.completedReleaseMetadata.has(release.id)) return true;

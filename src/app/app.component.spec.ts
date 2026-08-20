@@ -168,6 +168,69 @@ describe('AppComponent', () => {
       expect(router.navigate).toHaveBeenCalledWith(['/collection']);
     });
 
+    it('should render the Blob catalog before background reconciliation completes', async () => {
+      const router = spectator.inject(Router);
+      const config = spectator.inject(DiscogsConfigService);
+      const catalogService = spectator.inject(CatalogService);
+      config.load.mockResolvedValue({ configured: true, username: 'server-user' });
+      catalogService.load.mockResolvedValue({
+        schemaVersion: 1,
+        updatedAt: '',
+        releases: [
+          { id: 1, instanceId: 10, basicInfo: { title: 'Album', artists: [], formats: [] } },
+        ],
+      });
+      catalogService.write.mockReturnValue(new Promise(() => undefined));
+      spectator.inject(DatabaseService).getCollectionCount.mockResolvedValue(1);
+
+      await spectator.component.ngOnInit();
+
+      expect(router.navigate).toHaveBeenCalledWith(['/collection']);
+    });
+
+    it('should import only releases newly returned by the server reconciliation', async () => {
+      const config = spectator.inject(DiscogsConfigService);
+      const catalogService = spectator.inject(CatalogService);
+      const db = spectator.inject(DatabaseService);
+      const masterReleaseService = spectator.inject(MasterReleaseService);
+      config.load.mockResolvedValue({ configured: true, username: 'server-user' });
+      catalogService.load
+        .mockResolvedValueOnce({
+          schemaVersion: 1,
+          updatedAt: '',
+          releases: [
+            { id: 1, instanceId: 10, basicInfo: { title: 'Album', artists: [], formats: [] } },
+          ],
+        })
+        .mockResolvedValueOnce({
+          schemaVersion: 1,
+          updatedAt: '',
+          releases: [
+            { id: 1, instanceId: 10, basicInfo: { title: 'Album', artists: [], formats: [] } },
+            {
+              id: 2,
+              instanceId: 20,
+              basicInfo: { title: 'New Album', artists: [], formats: [], detailsFetched: true },
+            },
+          ],
+        });
+      db.getCollectionCount.mockResolvedValue(1);
+      db.getAllReleases.mockResolvedValue([{ id: 1 } as never]);
+
+      await spectator.component.ngOnInit();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(db.addRelease).toHaveBeenCalledTimes(1);
+      expect(db.addRelease).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }));
+      expect(masterReleaseService.startReleaseDetailEnrichmentFor).toHaveBeenCalledWith([
+        expect.objectContaining({
+          id: 2,
+          basicInfo: expect.objectContaining({ detailsFetched: true }),
+        }),
+      ]);
+    });
+
     it('should resume master release service and initialize achievements for returning users', async () => {
       const db = spectator.inject(DatabaseService);
       const masterReleaseService = spectator.inject(MasterReleaseService);

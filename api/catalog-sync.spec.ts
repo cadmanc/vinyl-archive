@@ -65,6 +65,43 @@ describe('catalog sync API', () => {
     ]);
   });
 
+  it('preserves enriched metadata for an unchanged catalog', async () => {
+    const res = response();
+    readCatalogMock.mockResolvedValue({
+      schemaVersion: 1,
+      updatedAt: '',
+      releases: [
+        {
+          id: 123,
+          instanceId: 10,
+          basicInfo: {
+            title: 'Album',
+            artists: ['Artist'],
+            formats: ['Vinyl'],
+            detailsFetched: true,
+            tracklist: [{ position: 'A1', title: 'Track' }],
+            totalRuntimeSeconds: 243,
+            originalYear: 1968,
+          },
+        },
+      ],
+    });
+
+    await handler({ method: 'POST' }, res);
+
+    expect(writeCatalogMock).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 123,
+        basicInfo: expect.objectContaining({
+          detailsFetched: true,
+          tracklist: [{ position: 'A1', title: 'Track' }],
+          totalRuntimeSeconds: 243,
+          originalYear: 1968,
+        }),
+      }),
+    ]);
+  });
+
   it('rejects browser-supplied catalog JSON', async () => {
     const res = response();
 

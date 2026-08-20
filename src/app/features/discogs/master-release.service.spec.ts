@@ -374,6 +374,20 @@ describe('MasterReleaseService', () => {
     });
   });
 
+  describe('startReleaseDetailEnrichmentFor', () => {
+    it('does not queue releases whose details are already fetched', async () => {
+      const release = {
+        ...mockReleaseNeedingData,
+        basicInfo: { ...mockReleaseNeedingData.basicInfo, detailsFetched: true },
+      };
+      const ensureReleaseMetadata = jest.spyOn(spectator.service, 'ensureReleaseMetadata');
+
+      await spectator.service.startReleaseDetailEnrichmentFor([release]);
+
+      expect(ensureReleaseMetadata).not.toHaveBeenCalled();
+    });
+  });
+
   describe('resolveOriginalYear', () => {
     it('resolves a 2015 AC/DC pressing to the master release year 1980', async () => {
       const db = spectator.inject(DatabaseService);
