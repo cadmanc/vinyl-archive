@@ -3,13 +3,16 @@ import { Router, UrlTree } from '@angular/router';
 import { syncGuard, playerGuard } from './app.guards';
 import { CredentialsService } from './credentials.service';
 import { DatabaseService } from './database.service';
+import { DiscogsConfigService } from './discogs-config.service';
 
 describe('syncGuard', () => {
-  let mockCredentialsService: { hasCredentials: jest.Mock };
+  let mockCredentialsService: { hasCredentials: jest.Mock; setServerUsername: jest.Mock };
+  let mockDiscogsConfigService: { load: jest.Mock };
   let mockRouter: { createUrlTree: jest.Mock; navigate: jest.Mock };
 
   beforeEach(() => {
-    mockCredentialsService = { hasCredentials: jest.fn() };
+    mockCredentialsService = { hasCredentials: jest.fn(), setServerUsername: jest.fn() };
+    mockDiscogsConfigService = { load: jest.fn().mockResolvedValue({ configured: false }) };
     mockRouter = {
       createUrlTree: jest.fn((commands) => ({ commands }) as unknown as UrlTree),
       navigate: jest.fn(),
@@ -19,23 +22,24 @@ describe('syncGuard', () => {
       providers: [
         { provide: CredentialsService, useValue: mockCredentialsService },
         { provide: DatabaseService, useValue: {} },
+        { provide: DiscogsConfigService, useValue: mockDiscogsConfigService },
         { provide: Router, useValue: mockRouter },
       ],
     });
   });
 
-  it('should return true when credentials exist', () => {
+  it('should return true when credentials exist', async () => {
     mockCredentialsService.hasCredentials.mockReturnValue(true);
 
-    const result = TestBed.runInInjectionContext(() => syncGuard({} as any, {} as any));
+    const result = await TestBed.runInInjectionContext(() => syncGuard({} as any, {} as any));
 
     expect(result).toBe(true);
   });
 
-  it('should redirect to /setup when no credentials', () => {
+  it('should redirect to /setup when no credentials', async () => {
     mockCredentialsService.hasCredentials.mockReturnValue(false);
 
-    const result = TestBed.runInInjectionContext(() => syncGuard({} as any, {} as any));
+    const result = await TestBed.runInInjectionContext(() => syncGuard({} as any, {} as any));
 
     expect(mockRouter.createUrlTree).toHaveBeenCalledWith(['/setup']);
     expect(result).not.toBe(true);
@@ -43,12 +47,14 @@ describe('syncGuard', () => {
 });
 
 describe('playerGuard', () => {
-  let mockCredentialsService: { hasCredentials: jest.Mock };
+  let mockCredentialsService: { hasCredentials: jest.Mock; setServerUsername: jest.Mock };
+  let mockDiscogsConfigService: { load: jest.Mock };
   let mockDatabaseService: { getCollectionCount: jest.Mock };
   let mockRouter: { createUrlTree: jest.Mock; navigate: jest.Mock };
 
   beforeEach(() => {
-    mockCredentialsService = { hasCredentials: jest.fn() };
+    mockCredentialsService = { hasCredentials: jest.fn(), setServerUsername: jest.fn() };
+    mockDiscogsConfigService = { load: jest.fn().mockResolvedValue({ configured: false }) };
     mockDatabaseService = { getCollectionCount: jest.fn() };
     mockRouter = {
       createUrlTree: jest.fn((commands) => ({ commands }) as unknown as UrlTree),
@@ -59,6 +65,7 @@ describe('playerGuard', () => {
       providers: [
         { provide: CredentialsService, useValue: mockCredentialsService },
         { provide: DatabaseService, useValue: mockDatabaseService },
+        { provide: DiscogsConfigService, useValue: mockDiscogsConfigService },
         { provide: Router, useValue: mockRouter },
       ],
     });

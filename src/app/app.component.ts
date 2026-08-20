@@ -38,7 +38,7 @@ export class AppComponent implements OnInit {
       serverConfig.configured ? (serverConfig.username ?? null) : null,
     );
 
-    if (!this.credentialsService.hasCredentials()) {
+    if (!serverConfig.configured && !this.credentialsService.hasCredentials()) {
       this.router.navigate(['/setup']);
       return;
     }

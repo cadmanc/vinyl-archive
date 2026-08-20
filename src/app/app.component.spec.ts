@@ -73,12 +73,26 @@ describe('AppComponent', () => {
       expect(router.navigate).toHaveBeenCalledWith(['/setup']);
     });
 
+    it('should navigate to /collection with configured server credentials and no local credentials', async () => {
+      const router = spectator.inject(Router);
+      const config = spectator.inject(DiscogsConfigService);
+      const catalogService = spectator.inject(CatalogService);
+      config.load.mockResolvedValue({ configured: true, username: 'server-user' });
+      catalogService.load.mockResolvedValue({ schemaVersion: 1, updatedAt: '', releases: [] });
+      mockCredentialsService.hasCredentials.mockReturnValue(false);
+
+      await spectator.component.ngOnInit();
+
+      expect(router.navigate).toHaveBeenCalledWith(['/collection']);
+      expect(router.navigate).not.toHaveBeenCalledWith(['/setup']);
+    });
+
     it('should load an existing server catalog before deciding whether to sync', async () => {
       const router = spectator.inject(Router);
       const db = spectator.inject(DatabaseService);
       const config = spectator.inject(DiscogsConfigService);
       const catalogService = spectator.inject(CatalogService);
-      mockCredentialsService.hasCredentials.mockReturnValue(true);
+      mockCredentialsService.hasCredentials.mockReturnValue(false);
       config.load.mockResolvedValue({ configured: true, username: 'server-user' });
       catalogService.load.mockResolvedValue({
         schemaVersion: 1,
@@ -104,7 +118,7 @@ describe('AppComponent', () => {
       const db = spectator.inject(DatabaseService);
       const config = spectator.inject(DiscogsConfigService);
       const catalogService = spectator.inject(CatalogService);
-      mockCredentialsService.hasCredentials.mockReturnValue(true);
+      mockCredentialsService.hasCredentials.mockReturnValue(false);
       config.load.mockResolvedValue({ configured: true, username: 'server-user' });
       catalogService.load
         .mockResolvedValueOnce({ schemaVersion: 1, updatedAt: '', releases: [] })
@@ -123,7 +137,7 @@ describe('AppComponent', () => {
 
       await spectator.component.ngOnInit();
 
-      expect(catalogService.write).toHaveBeenCalledWith();
+      expect(catalogService.write).toHaveBeenCalledTimes(1);
       expect(db.addRelease).toHaveBeenCalled();
       expect(router.navigate).toHaveBeenCalledWith(['/collection']);
       expect(router.navigate).not.toHaveBeenCalledWith(['/sync']);
