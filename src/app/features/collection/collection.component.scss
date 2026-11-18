@@ -140,6 +140,16 @@ h1 {
   white-space: nowrap;
 }
 
+.release-link {
+  color: inherit;
+  text-decoration: none;
+
+  &:hover,
+  &:focus-visible {
+    text-decoration: underline;
+  }
+}
+
 .metadata-cell {
   min-width: 0;
 

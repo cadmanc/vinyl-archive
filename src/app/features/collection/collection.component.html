@@ -102,7 +102,18 @@
                           <div class="artwork-placeholder" aria-hidden="true">No art</div>
                         }
                       </div>
-                      <h4 [attr.title]="release.basicInfo.title">{{ release.basicInfo.title }}</h4>
+                      <h4 [attr.title]="release.basicInfo.title">
+                        <a
+                          class="release-link"
+                          [href]="'https://www.discogs.com/release/' + release.id"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          (click)="$event.stopPropagation()"
+                          (keydown.enter)="$event.stopPropagation()"
+                          (keydown.space)="$event.stopPropagation()"
+                          >{{ release.basicInfo.title }}</a
+                        >
+                      </h4>
                       <div class="metadata-cell metadata-original">
                         <dt>Original</dt>
                         <dd>{{ originalYear(release) }}</dd>
