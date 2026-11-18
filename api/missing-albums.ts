@@ -13,9 +13,14 @@ const EXCLUDED_DESCRIPTIONS = ['Unofficial Release', 'Test Pressing', 'Promo'];
 const ALBUM_DESCRIPTIONS = ['Album', 'Compilation'];
 const NON_ALBUM_DESCRIPTIONS = ['Single', 'Maxi-Single', 'EP', 'Mini-Album'];
 const VARIOUS_ARTISTS_ID = 194;
+const REFRESH_LOCK_PATHNAME = `${CACHE_PREFIX}/refresh-lock.json`;
+const REFRESH_LOCK_MS = 120_000;
+const MAX_REFRESH_HOPS = 500;
+const HANDOFF_WAIT_MS = 3_000;
 
 type VercelRequest = {
   method?: string;
+  headers: Record<string, string | string[] | undefined>;
   query: Record<string, string | string[] | undefined>;
 };
 
@@ -443,20 +448,57 @@ export function refreshOrder(
 async function refreshCollection(
   token: string,
   deadline: number,
-): Promise<{ processed: number; remaining: number }> {
+): Promise<{ processed: number; succeeded: number; remaining: number }> {
   const [catalog, summary] = await Promise.all([readCatalog(), readSummary()]);
   const due = refreshOrder(collectionArtists(catalog.releases), summary);
   let processed = 0;
+  let succeeded = 0;
   for (const [key, releaseId] of due) {
     if (Date.now() >= deadline) break;
     try {
       await loadArtistAlbums(releaseId, token, deadline, key);
+      succeeded++;
     } catch {
       // Skip artists Discogs can't resolve; they are retried on the next refresh.
     }
     processed++;
   }
-  return { processed, remaining: due.length - processed };
+  return { processed, succeeded, remaining: due.length - processed };
+}
+
+interface RefreshLock {
+  cachedAt: string;
+  runId: string;
+  expiresAt: number;
+}
+
+/** Only one refresh chain runs at a time, so runs don't overwrite each other's summary writes. */
+async function claimRefreshLock(runId: string | undefined): Promise<string | null> {
+  const lock = await readCache<RefreshLock>(REFRESH_LOCK_PATHNAME);
+  if (lock && lock.expiresAt > Date.now() && lock.runId !== runId) return null;
+  const claimed = runId ?? crypto.randomUUID();
+  await writeRefreshLock(claimed, Date.now() + REFRESH_LOCK_MS);
+  return claimed;
+}
+
+async function writeRefreshLock(runId: string, expiresAt: number): Promise<void> {
+  await writeCache(REFRESH_LOCK_PATHNAME, {
+    cachedAt: new Date().toISOString(),
+    runId,
+    expiresAt,
+  } satisfies RefreshLock);
+}
+
+/** Starts the next refresh run; it keeps running after this request stops waiting for it. */
+async function handOff(req: VercelRequest, runId: string, hop: number): Promise<void> {
+  const host = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host;
+  if (!host) return;
+  const url = `https://${host}/api/missing-albums?refresh=1&run=${runId}&hop=${hop}`;
+  try {
+    await fetch(url, { signal: AbortSignal.timeout(HANDOFF_WAIT_MS) });
+  } catch {
+    // The timeout is expected: the next run is still working.
+  }
 }
 
 function positiveInteger(value: string | string[] | undefined): number | null {
@@ -495,7 +537,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   const deadline = Date.now() + TIME_BUDGET_MS;
   if (req.query.refresh !== undefined) {
     try {
-      res.status(200).json(await refreshCollection(token, deadline));
+      const requestedRun = Array.isArray(req.query.run) ? req.query.run[0] : req.query.run;
+      const runId = await claimRefreshLock(requestedRun);
+      if (!runId) {
+        res.status(200).json({ skipped: 'A refresh is already running' });
+        return;
+      }
+      const hop = positiveInteger(req.query.hop) ?? 1;
+      const result = await refreshCollection(token, deadline);
+      const continues = result.remaining > 0 && result.succeeded > 0 && hop < MAX_REFRESH_HOPS;
+      if (continues) {
+        await handOff(req, runId, hop + 1);
+      } else {
+        await writeRefreshLock(runId, 0);
+      }
+      res.status(200).json({ ...result, continues, hop });
     } catch {
       res.status(502).json({ error: 'Missing albums refresh failed' });
     }
