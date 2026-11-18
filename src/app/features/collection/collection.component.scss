@@ -150,6 +150,13 @@ h1 {
   }
 }
 
+.copy-count {
+  margin-left: 0.4rem;
+  color: $text-muted;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .metadata-cell {
   min-width: 0;
 

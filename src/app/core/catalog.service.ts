@@ -13,6 +13,25 @@ export interface CatalogDocument {
   releases: CatalogRelease[];
 }
 
+/**
+ * The catalog lists one entry per owned copy, so the same release ID can repeat.
+ * Returns each release once, in catalog order, with how many copies are owned.
+ */
+export function groupCatalogCopies(
+  releases: CatalogRelease[],
+): Array<{ release: CatalogRelease; copies: number }> {
+  const grouped = new Map<number, { release: CatalogRelease; copies: number }>();
+  for (const release of releases) {
+    const entry = grouped.get(release.id);
+    if (entry) {
+      entry.copies++;
+    } else {
+      grouped.set(release.id, { release, copies: 1 });
+    }
+  }
+  return [...grouped.values()];
+}
+
 @Injectable({ providedIn: 'root' })
 export class CatalogService {
   private enrichmentWriteQueue = Promise.resolve();

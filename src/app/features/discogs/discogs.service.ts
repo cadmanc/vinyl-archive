@@ -72,24 +72,24 @@ export class DiscogsService {
       const totalItems = firstPage.pagination.items;
       const catalog = await this.catalogService?.load();
       const catalogById = new Map(catalog?.releases.map((release) => [release.id, release]) ?? []);
-      const currentIds = new Set<number>();
+      const copiesById = new Map<number, number>();
 
       console.log(`Found ${totalItems} items across ${totalPages} pages`);
 
       // Process first page
-      await this.processReleases(firstPage.releases, catalogById, currentIds);
+      await this.processReleases(firstPage.releases, catalogById, copiesById);
 
       // Fetch remaining pages
       for (let page = 2; page <= totalPages; page++) {
         console.log(`Fetching page ${page} of ${totalPages}...`);
         const pageData = await this.fetchCollectionPage(page);
-        await this.processReleases(pageData.releases, catalogById, currentIds);
+        await this.processReleases(pageData.releases, catalogById, copiesById);
 
         // Respect rate limits - Discogs allows 60 requests per minute
         await this.delay(DISCOGS_API_DELAY_MS);
       }
 
-      await this.db.removeReleasesNotIn(currentIds);
+      await this.db.removeReleasesNotIn(new Set(copiesById.keys()));
       await this.persistCatalog();
 
       await this.db.setLastSyncDate(new Date());
@@ -193,11 +193,13 @@ export class DiscogsService {
   private async processReleases(
     discogsReleases: DiscogsRelease[],
     catalogById: Map<number, CatalogRelease>,
-    currentIds: Set<number>,
+    copiesById: Map<number, number>,
   ): Promise<void> {
     for (const discogsRelease of discogsReleases) {
       const release: Release = this.convertToRelease(discogsRelease);
-      currentIds.add(release.id);
+      const copies = (copiesById.get(release.id) ?? 0) + 1;
+      copiesById.set(release.id, copies);
+      release.copies = copies;
       const persisted = catalogById.get(release.id);
       if (persisted) {
         release.basicInfo = { ...release.basicInfo, ...persisted.basicInfo };
@@ -209,6 +211,7 @@ export class DiscogsService {
       if (existing) {
         // Update only the Discogs metadata, preserve play tracking data
         await this.db.updateRelease(release.id, {
+          copies,
           basicInfo: { ...existing.basicInfo, ...release.basicInfo },
           dateAddedToCollection: release.dateAddedToCollection,
           notes: release.notes,

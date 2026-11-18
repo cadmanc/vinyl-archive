@@ -46,7 +46,7 @@
     <div>
       <p class="eyebrow">Vinyl Archive</p>
       <h1>Collection</h1>
-      <span class="record-count">{{ releases().length }} records</span>
+      <span class="record-count">{{ totalCopies() }} records</span>
     </div>
   </header>
 
@@ -113,6 +113,11 @@
                           (keydown.space)="$event.stopPropagation()"
                           >{{ release.basicInfo.title }}</a
                         >
+                        @if ((release.copies ?? 1) > 1) {
+                          <span class="copy-count" [attr.aria-label]="release.copies + ' copies'"
+                            >&times;{{ release.copies }}</span
+                          >
+                        }
                       </h4>
                       <div class="metadata-cell metadata-original">
                         <dt>Original</dt>

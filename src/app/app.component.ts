@@ -6,7 +6,12 @@ import { MasterReleaseService } from './features/discogs/master-release.service'
 import { PwaUpdateService } from './core/pwa-update.service';
 import { AchievementsService } from './features/achievements/achievements.service';
 import { DiscogsConfigService } from './core/discogs-config.service';
-import { CatalogDocument, CatalogRelease, CatalogService } from './core/catalog.service';
+import {
+  CatalogDocument,
+  CatalogRelease,
+  CatalogService,
+  groupCatalogCopies,
+} from './core/catalog.service';
 import { Release } from './shared/models/release.model';
 
 @Component({
@@ -58,15 +63,16 @@ export class AppComponent implements OnInit {
       importedCatalog = true;
       const localReleases = (await this.db.getAllReleases()) ?? [];
       const localById = new Map(localReleases.map((release) => [release.id, release]));
-      for (const stored of catalog.releases) {
+      for (const { release: stored, copies } of groupCatalogCopies(catalog.releases)) {
         const local = localById.get(stored.id);
         if (local) {
           await this.db.updateRelease(stored.id, {
             instanceId: stored.instanceId,
+            copies,
             basicInfo: { ...stored.basicInfo, ...local.basicInfo },
           });
         } else {
-          await this.db.addRelease(this.catalogReleaseToRelease(stored));
+          await this.db.addRelease({ ...this.catalogReleaseToRelease(stored), copies });
         }
       }
       await this.db.removeReleasesNotIn(new Set(catalog.releases.map((release) => release.id)));
@@ -102,16 +108,28 @@ export class AppComponent implements OnInit {
 
       const knownIds = new Set(previousCatalog.releases.map((release) => release.id));
       const localReleases = (await this.db.getAllReleases()) ?? [];
-      const localIds = new Set(localReleases.map((release) => release.id));
+      const localById = new Map(localReleases.map((release) => [release.id, release]));
       const addedReleases: Release[] = [];
+      let copiesChanged = false;
 
-      for (const stored of refreshedCatalog.releases) {
-        if (knownIds.has(stored.id) || localIds.has(stored.id)) continue;
-        const release = this.catalogReleaseToRelease(stored);
+      for (const { release: stored, copies } of groupCatalogCopies(refreshedCatalog.releases)) {
+        const local = localById.get(stored.id);
+        if (local) {
+          if ((local.copies ?? 1) !== copies) {
+            await this.db.updateRelease(stored.id, { copies });
+            copiesChanged = true;
+          }
+          continue;
+        }
+        if (knownIds.has(stored.id)) continue;
+        const release = { ...this.catalogReleaseToRelease(stored), copies };
         await this.db.addRelease(release);
         addedReleases.push(release);
       }
 
+      if (copiesChanged) {
+        this.db.collectionChanged?.next();
+      }
       if (addedReleases.length) {
         void this.masterReleaseService.startReleaseDetailEnrichmentFor(addedReleases);
       }

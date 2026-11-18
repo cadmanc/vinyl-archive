@@ -55,6 +55,9 @@ export class CollectionComponent implements OnInit, OnDestroy {
   changelogOpen = signal(false);
 
   groups = computed(() => groupCollection(this.releases()));
+  totalCopies = computed(() =>
+    this.releases().reduce((total, release) => total + (release.copies ?? 1), 0),
+  );
   availableSections = computed(
     () => new Set(this.groups().map((group) => artistSection(group.heading))),
   );

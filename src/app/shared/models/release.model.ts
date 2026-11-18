@@ -22,6 +22,7 @@ export type ReleaseEnrichment = Pick<
 export interface Release {
   id: number; // Discogs release ID (primary key)
   instanceId: number; // Discogs collection instance ID
+  copies?: number; // Copies of this exact release in the Discogs collection; undefined means 1
   basicInfo: {
     title: string;
     artists: string[];

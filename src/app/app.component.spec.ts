@@ -253,6 +253,53 @@ describe('AppComponent', () => {
       expect(db.removeReleasesNotIn).toHaveBeenLastCalledWith(new Set([1]));
     });
 
+    it('should store duplicate copies of a release once with its copy count', async () => {
+      const config = spectator.inject(DiscogsConfigService);
+      const catalogService = spectator.inject(CatalogService);
+      const db = spectator.inject(DatabaseService);
+      const copy = (instanceId: number) => ({
+        id: 7,
+        instanceId,
+        basicInfo: { title: 'Tical', artists: ['Method Man'], formats: [] },
+      });
+      config.load.mockResolvedValue({ configured: true, username: 'server-user' });
+      catalogService.load.mockResolvedValue({
+        schemaVersion: 1,
+        updatedAt: '',
+        releases: [copy(70), copy(71)],
+      });
+      db.getAllReleases.mockResolvedValue([]);
+      db.getCollectionCount.mockResolvedValue(1);
+
+      await spectator.component.ngOnInit();
+
+      expect(db.addRelease).toHaveBeenCalledTimes(1);
+      expect(db.addRelease).toHaveBeenCalledWith(expect.objectContaining({ id: 7, copies: 2 }));
+    });
+
+    it('should update the copy count when it changes on Discogs', async () => {
+      const config = spectator.inject(DiscogsConfigService);
+      const catalogService = spectator.inject(CatalogService);
+      const db = spectator.inject(DatabaseService);
+      const copy = (instanceId: number) => ({
+        id: 7,
+        instanceId,
+        basicInfo: { title: 'Tical', artists: [], formats: [] },
+      });
+      config.load.mockResolvedValue({ configured: true, username: 'server-user' });
+      catalogService.load
+        .mockResolvedValueOnce({ schemaVersion: 1, updatedAt: '', releases: [copy(70)] })
+        .mockResolvedValueOnce({ schemaVersion: 1, updatedAt: '', releases: [copy(70), copy(71)] });
+      db.getCollectionCount.mockResolvedValue(1);
+      db.getAllReleases.mockResolvedValue([{ id: 7, copies: 1 }] as never);
+
+      await spectator.component.ngOnInit();
+      await new Promise((resolve) => setTimeout(resolve));
+
+      expect(db.updateRelease).toHaveBeenLastCalledWith(7, { copies: 2 });
+      expect(db.addRelease).not.toHaveBeenCalled();
+    });
+
     it('should resume master release service and initialize achievements for returning users', async () => {
       const db = spectator.inject(DatabaseService);
       const masterReleaseService = spectator.inject(MasterReleaseService);
