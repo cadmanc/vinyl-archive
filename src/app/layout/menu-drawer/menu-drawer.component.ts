@@ -14,10 +14,8 @@ import { Subject } from 'rxjs';
 import { DatabaseService } from '../../core/database.service';
 import { DiscogsService } from '../../features/discogs/discogs.service';
 import { FilterService } from '../../shared/services/filter.service';
-import { PlayStatsExportService } from '../../features/stats/play-stats-export.service';
 import { CredentialsService } from '../../core/credentials.service';
 import { MasterReleaseService } from '../../features/discogs/master-release.service';
-import { ImportMode } from '../../features/stats/play-stats-export.model';
 import { SYNC_MESSAGE_DISPLAY_MS } from '../../shared/constants/timing.constants';
 import { APP_VERSION } from '../../shared/constants/app.constants';
 
@@ -40,12 +38,6 @@ export class MenuDrawerComponent implements OnDestroy {
   availableOriginalDecades = signal<string[]>([]);
   availableVinylSizes = signal<string[]>([]);
   availableDiscCounts = signal<number[]>([]);
-
-  // Export/Import signals
-  exporting = signal(false);
-  importing = signal(false);
-  importExportMessage = signal('');
-  importMode = signal<ImportMode>('replace');
 
   // Advanced section collapsed state
   advancedExpanded = signal(false);
@@ -103,7 +95,6 @@ export class MenuDrawerComponent implements OnDestroy {
     private db: DatabaseService,
     private discogsService: DiscogsService,
     public filterService: FilterService,
-    private playStatsExportService: PlayStatsExportService,
     public credentialsService: CredentialsService,
     private masterReleaseService: MasterReleaseService,
   ) {
@@ -215,18 +206,6 @@ export class MenuDrawerComponent implements OnDestroy {
       });
   }
 
-  toggleExcludeBoxSets(): void {
-    const current = this.filterService.filters().excludeBoxSets;
-    this.filterService.setExcludeBoxSets(!current);
-    this.filtersChanged.emit();
-  }
-
-  toggleNotPlayedIn6Months(): void {
-    const current = this.filterService.filters().notPlayedIn6Months;
-    this.filterService.setNotPlayedIn6Months(!current);
-    this.filtersChanged.emit();
-  }
-
   toggleGenre(genre: string): void {
     this.filterService.toggleGenre(genre);
     this.filtersChanged.emit();
@@ -313,73 +292,6 @@ export class MenuDrawerComponent implements OnDestroy {
       .finally(() => {
         this.clearing.set(false);
       });
-  }
-
-  async onExport(): Promise<void> {
-    this.exporting.set(true);
-    this.importExportMessage.set('');
-
-    try {
-      await this.playStatsExportService.exportToFile();
-      this.importExportMessage.set('Export downloaded successfully!');
-    } catch (error) {
-      console.error('Export failed:', error);
-      this.importExportMessage.set('Export failed. Please try again.');
-    } finally {
-      this.exporting.set(false);
-      setTimeout(() => this.importExportMessage.set(''), SYNC_MESSAGE_DISPLAY_MS);
-    }
-  }
-
-  onImportClick(): void {
-    const fileInput = document.getElementById('import-file-input') as HTMLInputElement;
-    fileInput?.click();
-  }
-
-  async onFileSelected(event: Event): Promise<void> {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-
-    if (!file) return;
-
-    this.importing.set(true);
-    this.importExportMessage.set('Importing...');
-
-    try {
-      const content = await file.text();
-      const validation = this.playStatsExportService.validateImportFile(content);
-
-      if (!validation.valid) {
-        this.importExportMessage.set(`Invalid file: ${validation.errors[0]}`);
-        return;
-      }
-
-      const result = await this.playStatsExportService.importFromData(
-        validation.data!,
-        this.importMode(),
-      );
-
-      if (result.success) {
-        this.importExportMessage.set(
-          `Imported ${result.imported} releases` +
-            (result.skipped > 0 ? `, skipped ${result.skipped}` : ''),
-        );
-        this.loadMenuData();
-      } else {
-        this.importExportMessage.set(`Import completed with errors: ${result.errors[0]}`);
-      }
-    } catch (error) {
-      console.error('Import failed:', error);
-      this.importExportMessage.set('Import failed. Please try again.');
-    } finally {
-      this.importing.set(false);
-      input.value = '';
-      setTimeout(() => this.importExportMessage.set(''), SYNC_MESSAGE_DISPLAY_MS);
-    }
-  }
-
-  setImportMode(mode: ImportMode): void {
-    this.importMode.set(mode);
   }
 
   toggleAdvanced(): void {

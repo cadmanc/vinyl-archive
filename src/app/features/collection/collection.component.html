@@ -13,7 +13,6 @@
     [isOpen]="menuOpen()"
     (close)="closeMenu()"
     (dataCleared)="onDataCleared()"
-    (filtersChanged)="closeMenu()"
     (openChangelog)="openChangelog()"
   ></app-menu-drawer>
 
@@ -46,7 +45,16 @@
     <div>
       <p class="eyebrow">Vinyl Archive</p>
       <h1>The Collection</h1>
-      <span class="record-count">{{ totalCopies() }} records</span>
+      <span class="record-count">
+        @if (hasActiveFilters()) {
+          {{ filteredCopies() }} of {{ totalCopies() }} records
+          <button type="button" class="clear-filters" (click)="clearFilters()">
+            Clear filters
+          </button>
+        } @else {
+          {{ totalCopies() }} records
+        }
+      </span>
     </div>
   </header>
 
@@ -73,6 +81,8 @@
     <p class="collection-status">Loading collection...</p>
   } @else if (releases().length === 0) {
     <p class="collection-status">No records found in your collection.</p>
+  } @else if (filteredReleases().length === 0) {
+    <p class="collection-status">No records match these filters.</p>
   } @else {
     <section class="collection-list" aria-label="Your collection">
       @for (letter of letters; track letter) {

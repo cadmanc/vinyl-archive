@@ -148,6 +148,17 @@ h1 {
   }
 }
 
+.clear-filters {
+  margin-left: 0.4rem;
+  padding: 0;
+  color: $text-accent;
+  font: inherit;
+  text-decoration: underline;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
 .copy-count {
   margin-left: 0.4rem;
   color: $text-muted;

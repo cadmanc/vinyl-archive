@@ -5,6 +5,7 @@ import { Subject, takeUntil } from 'rxjs';
 import { DatabaseService } from '../../core/database.service';
 import { Release } from '../../shared/models/release.model';
 import { MasterReleaseService } from '../discogs/master-release.service';
+import { FilterService } from '../../shared/services/filter.service';
 import { MenuDrawerComponent } from '../../layout/menu-drawer/menu-drawer.component';
 import { SearchSheetComponent } from '../player/search-sheet/search-sheet.component';
 import { PlayHistorySheetComponent } from '../player/play-history-sheet/play-history-sheet.component';
@@ -22,6 +23,10 @@ import {
 export { sortCollection } from './collection.utils';
 
 type ResolutionState = 'fetching' | 'unknown';
+
+function countCopies(releases: Release[]): number {
+  return releases.reduce((total, release) => total + (release.copies ?? 1), 0);
+}
 
 @Component({
   selector: 'app-collection',
@@ -54,10 +59,14 @@ export class CollectionComponent implements OnInit, OnDestroy {
   achievementsOpen = signal(false);
   changelogOpen = signal(false);
 
-  groups = computed(() => groupCollection(this.releases()));
-  totalCopies = computed(() =>
-    this.releases().reduce((total, release) => total + (release.copies ?? 1), 0),
-  );
+  filteredReleases = computed(() => {
+    this.filterService.filters();
+    return this.releases().filter((release) => this.filterService.matchesFilters(release));
+  });
+  groups = computed(() => groupCollection(this.filteredReleases()));
+  totalCopies = computed(() => countCopies(this.releases()));
+  filteredCopies = computed(() => countCopies(this.filteredReleases()));
+  hasActiveFilters = computed(() => this.filterService.hasActiveFilters());
   availableSections = computed(
     () => new Set(this.groups().map((group) => artistSection(group.heading))),
   );
@@ -75,6 +84,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
     private db: DatabaseService,
     private masterReleaseService: MasterReleaseService,
     private router: Router,
+    private filterService: FilterService,
   ) {
     this.masterReleaseService.releaseDetailUpdated?.pipe(takeUntil(this.destroy$)).subscribe(() => {
       void this.refreshReleases();
@@ -92,6 +102,11 @@ export class CollectionComponent implements OnInit, OnDestroy {
   }
 
   async ngOnInit(): Promise<void> {
+    // These filters no longer have controls; clear any value saved before they were removed.
+    if (this.filterService.filters().excludeBoxSets) this.filterService.setExcludeBoxSets(false);
+    if (this.filterService.filters().notPlayedIn6Months) {
+      this.filterService.setNotPlayedIn6Months(false);
+    }
     try {
       const releases = await this.db.getAllReleases();
       this.releases.set(sortCollection(releases));
@@ -142,6 +157,10 @@ export class CollectionComponent implements OnInit, OnDestroy {
 
   closeMenu(): void {
     this.menuOpen.set(false);
+  }
+
+  clearFilters(): void {
+    this.filterService.resetFilters();
   }
 
   toggleSearch(): void {

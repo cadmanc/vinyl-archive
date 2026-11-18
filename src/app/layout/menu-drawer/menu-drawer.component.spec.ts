@@ -6,7 +6,6 @@ import { DatabaseService } from '../../core/database.service';
 import { DiscogsService } from '../../features/discogs/discogs.service';
 import { FilterService } from '../../shared/services/filter.service';
 import { CredentialsService } from '../../core/credentials.service';
-import { PlayStatsExportService } from '../../features/stats/play-stats-export.service';
 import { MasterReleaseService } from '../../features/discogs/master-release.service';
 import { DEFAULT_FILTERS } from '../../shared/models/filter.model';
 import { SYNC_MESSAGE_DISPLAY_MS } from '../../shared/constants/timing.constants';
@@ -40,11 +39,6 @@ describe('MenuDrawerComponent', () => {
     getToken: jest.Mock;
     setCredentials: jest.Mock;
     hasCredentials: jest.Mock;
-  };
-  let mockPlayStatsExportService: {
-    exportToFile: jest.Mock;
-    validateImportFile: jest.Mock;
-    importFromData: jest.Mock;
   };
   let mockMasterReleaseService: {
     startBackgroundFetch: jest.Mock;
@@ -91,14 +85,6 @@ describe('MenuDrawerComponent', () => {
       hasCredentials: jest.fn().mockReturnValue(true),
     };
 
-    mockPlayStatsExportService = {
-      exportToFile: jest.fn().mockResolvedValue(undefined),
-      validateImportFile: jest.fn().mockReturnValue({ valid: true, data: {} }),
-      importFromData: jest
-        .fn()
-        .mockResolvedValue({ success: true, imported: 0, skipped: 0, errors: [] }),
-    };
-
     mockMasterReleaseService = {
       startBackgroundFetch: jest.fn().mockResolvedValue(undefined),
       resumeIfNeeded: jest.fn().mockResolvedValue(undefined),
@@ -113,7 +99,6 @@ describe('MenuDrawerComponent', () => {
         { provide: DiscogsService, useValue: mockDiscogsService },
         { provide: FilterService, useValue: mockFilterService },
         { provide: CredentialsService, useValue: mockCredentialsService },
-        { provide: PlayStatsExportService, useValue: mockPlayStatsExportService },
         { provide: MasterReleaseService, useValue: mockMasterReleaseService },
       ],
     });
@@ -656,28 +641,6 @@ describe('MenuDrawerComponent', () => {
   });
 
   describe('filter toggle methods', () => {
-    it('should toggle excludeBoxSets and emit filtersChanged', () => {
-      const filtersChangedSpy = jest.fn();
-      spectator.component.filtersChanged.subscribe(filtersChangedSpy);
-      mockFilterService.filters.set({ ...DEFAULT_FILTERS, excludeBoxSets: true });
-
-      spectator.component.toggleExcludeBoxSets();
-
-      expect(mockFilterService.setExcludeBoxSets).toHaveBeenCalledWith(false);
-      expect(filtersChangedSpy).toHaveBeenCalledTimes(1);
-    });
-
-    it('should toggle notPlayedIn6Months and emit filtersChanged', () => {
-      const filtersChangedSpy = jest.fn();
-      spectator.component.filtersChanged.subscribe(filtersChangedSpy);
-      mockFilterService.filters.set({ ...DEFAULT_FILTERS, notPlayedIn6Months: false });
-
-      spectator.component.toggleNotPlayedIn6Months();
-
-      expect(mockFilterService.setNotPlayedIn6Months).toHaveBeenCalledWith(true);
-      expect(filtersChangedSpy).toHaveBeenCalledTimes(1);
-    });
-
     it('should toggle genre and emit filtersChanged', () => {
       const filtersChangedSpy = jest.fn();
       spectator.component.filtersChanged.subscribe(filtersChangedSpy);
@@ -1012,179 +975,6 @@ describe('MenuDrawerComponent', () => {
         spectator.component.toggleShowEditToken();
 
         expect(spectator.component.showEditToken()).toBe(false);
-      });
-    });
-  });
-
-  describe('export/import', () => {
-    describe('onExport', () => {
-      it('should set exporting to true while exporting', async () => {
-        mockPlayStatsExportService.exportToFile.mockReturnValue(new Promise(() => {}));
-
-        spectator.component.onExport();
-
-        expect(spectator.component.exporting()).toBe(true);
-      });
-
-      it('should show success message on successful export', async () => {
-        jest.useFakeTimers();
-        mockPlayStatsExportService.exportToFile.mockResolvedValue(undefined);
-
-        await spectator.component.onExport();
-
-        expect(spectator.component.importExportMessage()).toBe('Export downloaded successfully!');
-
-        jest.useRealTimers();
-      });
-
-      it('should set exporting to false after export completes', async () => {
-        mockPlayStatsExportService.exportToFile.mockResolvedValue(undefined);
-
-        await spectator.component.onExport();
-
-        expect(spectator.component.exporting()).toBe(false);
-      });
-
-      it('should show error message on export failure', async () => {
-        jest.useFakeTimers();
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
-        mockPlayStatsExportService.exportToFile.mockRejectedValue(new Error('Export failed'));
-
-        await spectator.component.onExport();
-
-        expect(spectator.component.importExportMessage()).toBe('Export failed. Please try again.');
-        expect(consoleErrorSpy).toHaveBeenCalledWith('Export failed:', expect.any(Error));
-
-        consoleErrorSpy.mockRestore();
-        jest.useRealTimers();
-      });
-
-      it('should clear message after timeout', async () => {
-        jest.useFakeTimers();
-        mockPlayStatsExportService.exportToFile.mockResolvedValue(undefined);
-
-        await spectator.component.onExport();
-
-        expect(spectator.component.importExportMessage()).toBe('Export downloaded successfully!');
-
-        jest.advanceTimersByTime(SYNC_MESSAGE_DISPLAY_MS);
-
-        expect(spectator.component.importExportMessage()).toBe('');
-
-        jest.useRealTimers();
-      });
-    });
-
-    describe('setImportMode', () => {
-      it('should set import mode to replace', () => {
-        spectator.component.setImportMode('replace');
-
-        expect(spectator.component.importMode()).toBe('replace');
-      });
-
-      it('should set import mode to merge', () => {
-        spectator.component.setImportMode('merge');
-
-        expect(spectator.component.importMode()).toBe('merge');
-      });
-    });
-
-    describe('onFileSelected', () => {
-      it('should do nothing when no file is selected', async () => {
-        const event = { target: { files: [] } } as unknown as Event;
-
-        await spectator.component.onFileSelected(event);
-
-        expect(spectator.component.importing()).toBe(false);
-        expect(mockPlayStatsExportService.validateImportFile).not.toHaveBeenCalled();
-      });
-
-      it('should set importing to true while importing', async () => {
-        const mockFile = new File(['{}'], 'test.json', { type: 'application/json' });
-        mockFile.text = jest.fn().mockResolvedValue('{}');
-        const event = { target: { files: [mockFile], value: '' } } as unknown as Event;
-        mockPlayStatsExportService.validateImportFile.mockReturnValue({ valid: true, data: {} });
-        mockPlayStatsExportService.importFromData.mockReturnValue(new Promise(() => {}));
-
-        spectator.component.onFileSelected(event);
-
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(spectator.component.importing()).toBe(true);
-      });
-
-      it('should show error for invalid file', async () => {
-        jest.useFakeTimers();
-        const mockFile = new File(['invalid'], 'test.json', { type: 'application/json' });
-        mockFile.text = jest.fn().mockResolvedValue('invalid');
-        const event = { target: { files: [mockFile], value: '' } } as unknown as Event;
-        mockPlayStatsExportService.validateImportFile.mockReturnValue({
-          valid: false,
-          errors: ['Invalid JSON format'],
-        });
-
-        await spectator.component.onFileSelected(event);
-
-        expect(spectator.component.importExportMessage()).toBe('Invalid file: Invalid JSON format');
-
-        jest.useRealTimers();
-      });
-
-      it('should show success message on successful import', async () => {
-        jest.useFakeTimers();
-        const mockFile = new File(['{}'], 'test.json', { type: 'application/json' });
-        mockFile.text = jest.fn().mockResolvedValue('{}');
-        const event = { target: { files: [mockFile], value: '' } } as unknown as Event;
-        mockPlayStatsExportService.validateImportFile.mockReturnValue({ valid: true, data: {} });
-        mockPlayStatsExportService.importFromData.mockResolvedValue({
-          success: true,
-          imported: 10,
-          skipped: 2,
-          errors: [],
-        });
-
-        await spectator.component.onFileSelected(event);
-
-        expect(spectator.component.importExportMessage()).toBe('Imported 10 releases, skipped 2');
-
-        jest.useRealTimers();
-      });
-
-      it('should show success message without skipped when none skipped', async () => {
-        jest.useFakeTimers();
-        const mockFile = new File(['{}'], 'test.json', { type: 'application/json' });
-        mockFile.text = jest.fn().mockResolvedValue('{}');
-        const event = { target: { files: [mockFile], value: '' } } as unknown as Event;
-        mockPlayStatsExportService.validateImportFile.mockReturnValue({ valid: true, data: {} });
-        mockPlayStatsExportService.importFromData.mockResolvedValue({
-          success: true,
-          imported: 10,
-          skipped: 0,
-          errors: [],
-        });
-
-        await spectator.component.onFileSelected(event);
-
-        expect(spectator.component.importExportMessage()).toBe('Imported 10 releases');
-
-        jest.useRealTimers();
-      });
-
-      it('should handle import error', async () => {
-        jest.useFakeTimers();
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
-        const mockFile = new File(['{}'], 'test.json', { type: 'application/json' });
-        mockFile.text = jest.fn().mockRejectedValue(new Error('Read error'));
-        const event = { target: { files: [mockFile], value: '' } } as unknown as Event;
-
-        await spectator.component.onFileSelected(event);
-
-        expect(spectator.component.importExportMessage()).toBe('Import failed. Please try again.');
-        expect(consoleErrorSpy).toHaveBeenCalledWith('Import failed:', expect.any(Error));
-
-        consoleErrorSpy.mockRestore();
-        jest.useRealTimers();
       });
     });
   });

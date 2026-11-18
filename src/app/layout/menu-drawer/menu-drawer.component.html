@@ -14,38 +14,6 @@
       <div class="menu-section">
         <h3>Filters</h3>
         <div class="filters-container">
-          <!-- Box Set Toggle -->
-          <div class="filter-group">
-            <label class="toggle-label">
-              <span class="toggle-text">Exclude Box Sets</span>
-              <button
-                class="toggle-button"
-                [class.active]="filterService.filters().excludeBoxSets"
-                (click)="toggleExcludeBoxSets()"
-              >
-                <span class="toggle-track">
-                  <span class="toggle-thumb"></span>
-                </span>
-              </button>
-            </label>
-          </div>
-
-          <!-- Not Played in 6 Months Toggle -->
-          <div class="filter-group">
-            <label class="toggle-label">
-              <span class="toggle-text">Not played in 6+ months</span>
-              <button
-                class="toggle-button"
-                [class.active]="filterService.filters().notPlayedIn6Months"
-                (click)="toggleNotPlayedIn6Months()"
-              >
-                <span class="toggle-track">
-                  <span class="toggle-thumb"></span>
-                </span>
-              </button>
-            </label>
-          </div>
-
           <!-- Genre Chips -->
           @if (hasGenres()) {
             <div class="filter-group">
@@ -240,65 +208,6 @@
                     large collections.
                   </p>
                 </div>
-              </div>
-            </div>
-
-            <!-- Export/Import Section -->
-            <div class="menu-section">
-              <h3>Backup & Restore</h3>
-              <div class="export-import-container">
-                <p class="export-import-info">Export or import your play counts and history.</p>
-
-                <!-- Export Button -->
-                <button class="export-button" (click)="onExport()" [disabled]="exporting()">
-                  <span class="button-icon">⬇</span>
-                  {{ exporting() ? 'Exporting...' : 'Export Play Stats' }}
-                </button>
-
-                <!-- Import Mode Toggle -->
-                <div class="import-mode-toggle">
-                  <label class="toggle-label">
-                    <span class="toggle-text">
-                      {{ importMode() === 'replace' ? 'Replace' : 'Merge' }}
-                    </span>
-                    <button
-                      class="toggle-button"
-                      [class.active]="importMode() === 'merge'"
-                      (click)="setImportMode(importMode() === 'replace' ? 'merge' : 'replace')"
-                    >
-                      <span class="toggle-track">
-                        <span class="toggle-thumb"></span>
-                      </span>
-                    </button>
-                  </label>
-                  <p class="import-mode-hint">
-                    {{
-                      importMode() === 'replace'
-                        ? 'Overwrites all play data'
-                        : 'Adds to existing play counts'
-                    }}
-                  </p>
-                </div>
-
-                <!-- Import Button -->
-                <button class="import-button" (click)="onImportClick()" [disabled]="importing()">
-                  <span class="button-icon">⬆</span>
-                  {{ importing() ? 'Importing...' : 'Import Play Stats' }}
-                </button>
-
-                <!-- Hidden file input -->
-                <input
-                  type="file"
-                  id="import-file-input"
-                  accept=".json"
-                  style="display: none"
-                  (change)="onFileSelected($event)"
-                />
-
-                <!-- Status message -->
-                @if (importExportMessage()) {
-                  <p class="sync-message">{{ importExportMessage() }}</p>
-                }
               </div>
             </div>
 

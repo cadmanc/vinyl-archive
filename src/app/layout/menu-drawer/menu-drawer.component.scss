@@ -237,40 +237,6 @@
 }
 
 // ==============================================
-// Export/Import Section
-// ==============================================
-
-.export-import-container {
-  @include card-panel;
-}
-
-.export-import-info {
-  color: $text-muted;
-  font-size: 0.875rem;
-  margin-bottom: 1rem;
-}
-
-.export-button {
-  @include btn-primary;
-  margin-bottom: 1rem;
-}
-
-.import-button {
-  @include btn-primary;
-}
-
-.import-mode-toggle {
-  margin-bottom: 1rem;
-}
-
-.import-mode-hint {
-  color: $text-muted;
-  font-size: 0.75rem;
-  margin-top: 0.5rem;
-  font-style: italic;
-}
-
-// ==============================================
 // Advanced Section (Collapsible)
 // ==============================================
 
