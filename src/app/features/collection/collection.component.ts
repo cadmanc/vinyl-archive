@@ -24,6 +24,21 @@ export { sortCollection } from './collection.utils';
 
 type ResolutionState = 'fetching' | 'unknown';
 
+const PACIFIC_DATE = new Intl.DateTimeFormat('en-US', {
+  dateStyle: 'full',
+  timeZone: 'America/Los_Angeles',
+});
+const PACIFIC_TIME = new Intl.DateTimeFormat('en-US', {
+  hour: 'numeric',
+  minute: '2-digit',
+  timeZone: 'America/Los_Angeles',
+  timeZoneName: 'short',
+});
+
+export function formatPacificDateTime(date: Date): string {
+  return `${PACIFIC_DATE.format(date)} · ${PACIFIC_TIME.format(date)}`;
+}
+
 function countCopies(releases: Release[]): number {
   return releases.reduce((total, release) => total + (release.copies ?? 1), 0);
 }
@@ -49,6 +64,11 @@ export class CollectionComponent implements OnInit, OnDestroy {
 
   readonly letters = COLLECTION_LETTERS;
   releases = signal<Release[]>([]);
+  currentTime = signal(formatPacificDateTime(new Date()));
+  private clockTimer = setInterval(
+    () => this.currentTime.set(formatPacificDateTime(new Date())),
+    1000,
+  );
   isLoading = signal(true);
   resolutionStates = signal<Record<number, ResolutionState>>({});
   expandedReleases = signal<Set<number>>(new Set());
@@ -97,6 +117,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
   private destroy$ = new Subject<void>();
 
   ngOnDestroy(): void {
+    clearInterval(this.clockTimer);
     this.destroy$.next();
     this.destroy$.complete();
   }

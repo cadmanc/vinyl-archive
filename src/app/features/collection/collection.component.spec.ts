@@ -1,11 +1,25 @@
 import { Release } from '../../shared/models/release.model';
-import { CollectionComponent } from './collection.component';
+import { CollectionComponent, formatPacificDateTime } from './collection.component';
 import {
   artistSection,
   groupCollection,
   normalizeArtistSortKey,
   sortCollection,
 } from './collection.utils';
+
+describe('formatPacificDateTime', () => {
+  it('formats the long date and time in Pacific time', () => {
+    expect(formatPacificDateTime(new Date('2026-11-18T21:25:00Z'))).toBe(
+      'Wednesday, November 18, 2026 · 1:25 PM PST',
+    );
+  });
+
+  it('labels daylight saving time as PDT', () => {
+    expect(formatPacificDateTime(new Date('2026-07-04T19:05:00Z'))).toBe(
+      'Saturday, July 4, 2026 · 12:05 PM PDT',
+    );
+  });
+});
 
 describe('sortCollection', () => {
   const release = (

@@ -38,8 +38,8 @@
 
   <header class="collection-header">
     <div>
-      <p class="eyebrow">Vinyl Archive</p>
-      <h1>The Collection</h1>
+      <p class="eyebrow">{{ currentTime() }}</p>
+      <h1>The Archive</h1>
       <span class="record-count">
         @if (hasActiveFilters()) {
           {{ filteredCopies() }} of {{ totalCopies() }} records
