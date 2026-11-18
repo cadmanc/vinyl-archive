@@ -11,6 +11,7 @@ const RATE_LIMIT_FLOOR = 5;
 const EXCLUDED_DESCRIPTIONS = ['Unofficial Release', 'Test Pressing', 'Promo'];
 const ALBUM_DESCRIPTIONS = ['Album', 'Compilation'];
 const NON_ALBUM_DESCRIPTIONS = ['Single', 'Maxi-Single', 'EP', 'Mini-Album'];
+const VARIOUS_ARTISTS_ID = 194;
 
 type VercelRequest = {
   method?: string;
@@ -25,7 +26,14 @@ type VercelResponse = {
 
 interface DiscogsArtistReleasesPage {
   pagination: { pages: number };
-  releases: Array<{ id: number; type: string; role: string; title: string; year?: number }>;
+  releases: Array<{
+    id: number;
+    type: string;
+    role: string;
+    title: string;
+    artist?: string;
+    year?: number;
+  }>;
 }
 
 interface DiscogsMasterVersion {
@@ -145,6 +153,19 @@ export function sortPressings(pressings: VinylPressing[]): VinylPressing[] {
   );
 }
 
+export function normalizeArtistName(name: string): string {
+  return name
+    .replace(/\s+\(\d+\)$/, '')
+    .trim()
+    .toLocaleLowerCase();
+}
+
+/** For a collaboration, keep only titles credited to every collaborating artist. */
+export function creditsAllArtists(credit: string | undefined, partners: string[]): boolean {
+  const normalizedCredit = (credit ?? '').toLocaleLowerCase();
+  return partners.every((partner) => normalizedCredit.includes(normalizeArtistName(partner)));
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function discogsGet<T>(
@@ -203,11 +224,12 @@ async function loadArtistAlbums(
   deadline: number,
 ): Promise<ArtistAlbumsDocument> {
   const release = await discogsGet<DiscogsReleaseDetail>(`/releases/${releaseId}`, token);
-  const artist = release.artists?.[0];
+  const artists = release.artists ?? [];
+  const artist = artists[0];
   if (!artist) throw new Error('Release has no artist');
+  const partners = artists.slice(1).map((partner) => partner.name);
 
-  const pathname = `${CACHE_PREFIX}/artist-${artist.id}.json`;
-  const document: ArtistAlbumsDocument = (await readCache<ArtistAlbumsDocument>(pathname)) ?? {
+  const emptyDocument: ArtistAlbumsDocument = {
     cachedAt: new Date().toISOString(),
     artist: { id: artist.id, name: artist.name },
     masters: [],
@@ -216,6 +238,10 @@ async function loadArtistAlbums(
     albums: [],
     complete: false,
   };
+  if (artist.id === VARIOUS_ARTISTS_ID) return { ...emptyDocument, complete: true };
+
+  const pathname = `${CACHE_PREFIX}/artist-${artists.map((credit) => credit.id).join('-')}.json`;
+  const document = (await readCache<ArtistAlbumsDocument>(pathname)) ?? emptyDocument;
   if (document.complete) return document;
 
   while (
@@ -234,7 +260,12 @@ async function loadArtistAlbums(
     );
     document.masters.push(
       ...data.releases
-        .filter((item) => item.type === 'master' && item.role === 'Main')
+        .filter(
+          (item) =>
+            item.type === 'master' &&
+            item.role === 'Main' &&
+            creditsAllArtists(item.artist, partners),
+        )
         .map((item) => ({ masterId: item.id, title: item.title, year: item.year || undefined })),
     );
     document.pagesFetched++;

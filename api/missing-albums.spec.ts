@@ -1,4 +1,5 @@
 import {
+  creditsAllArtists,
   formatDescriptions,
   isAlbumVersion,
   isOfficialVersion,
@@ -49,6 +50,25 @@ describe('missing albums classification', () => {
     expect(parseYear('2019-10-04')).toBe(2019);
     expect(parseYear('0')).toBeUndefined();
     expect(parseYear(undefined)).toBeUndefined();
+  });
+});
+
+describe('creditsAllArtists', () => {
+  it('keeps every title for a solo artist', () => {
+    expect(creditsAllArtists('BadBadNotGood', [])).toBe(true);
+  });
+
+  it('keeps only joint titles for a collaboration', () => {
+    const partners = ['Ghostface Killah'];
+    expect(creditsAllArtists('BadBadNotGood & Ghostface Killah', partners)).toBe(true);
+    expect(creditsAllArtists('BadBadNotGood', partners)).toBe(false);
+    expect(creditsAllArtists('BadBadNotGood & Little Dragon', partners)).toBe(false);
+  });
+
+  it('ignores Discogs disambiguation numbers', () => {
+    expect(creditsAllArtists('Animated Violence & Total Vacation', ['Total Vacation (2)'])).toBe(
+      true,
+    );
   });
 });
 

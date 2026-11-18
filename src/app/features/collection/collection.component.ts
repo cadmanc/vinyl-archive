@@ -47,8 +47,8 @@ export function formatPacificDateTime(date: Date): string {
   return `${PACIFIC_DATE.format(date)} · ${PACIFIC_TIME.format(date)}`;
 }
 
-// Missing albums is being validated on these artists before it is enabled for every artist.
-const MISSING_ALBUMS_TEST_ARTISTS = new Set(['nirvana']);
+// "Various" credits hundreds of thousands of releases, so it has no meaningful discography.
+const MISSING_ALBUMS_EXCLUDED_ARTISTS = new Set(['various']);
 const MISSING_ALBUMS_POLL_MS = 2000;
 
 type LoadState<T> =
@@ -227,7 +227,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
   }
 
   supportsMissingAlbums(group: CollectionGroup): boolean {
-    return MISSING_ALBUMS_TEST_ARTISTS.has(group.key);
+    return !MISSING_ALBUMS_EXCLUDED_ARTISTS.has(group.key);
   }
 
   isArtistExpanded(key: string): boolean {
