@@ -7,7 +7,9 @@ const CACHE_PREFIX = 'vinyl-archive/missing-albums';
 const SUMMARY_PATHNAME = `${CACHE_PREFIX}/summary.json`;
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 // Stay well inside the shortest Vercel function limit; progress is saved and resumed.
-const TIME_BUDGET_MS = 45_000;
+const TIME_BUDGET_MS = 40_000;
+// Extra time an in-flight Discogs request may use past the budget before giving up.
+const REQUEST_GRACE_MS = 8_000;
 const RATE_LIMIT_FLOOR = 5;
 const EXCLUDED_DESCRIPTIONS = ['Unofficial Release', 'Test Pressing', 'Promo'];
 const ALBUM_DESCRIPTIONS = ['Album', 'Compilation'];
@@ -192,13 +194,16 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function discogsGet<T>(
   path: string,
   token: string,
+  deadline: number,
   params: Record<string, string> = {},
 ): Promise<T> {
   const url = new URL(path, DISCOGS_API_URL);
+  const hardStop = deadline + REQUEST_GRACE_MS;
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
 
   for (let attempt = 0; attempt < 6; attempt++) {
     const response = await fetch(url, {
+      signal: AbortSignal.timeout(Math.max(1_000, hardStop - Date.now())),
       headers: {
         Accept: 'application/json',
         'User-Agent': DISCOGS_USER_AGENT,
@@ -206,7 +211,10 @@ async function discogsGet<T>(
       },
     });
     if (response.status === 429) {
-      await sleep((Number(response.headers.get('retry-after')) || 10) * 1000);
+      const wait = (Number(response.headers.get('retry-after')) || 10) * 1000;
+      if (Date.now() + wait > hardStop)
+        throw new Error('Discogs rate limit outlasted the time budget');
+      await sleep(wait);
       continue;
     }
     if (!response.ok) throw new Error(`Discogs request failed with ${response.status}`);
@@ -276,7 +284,7 @@ async function loadArtistAlbums(
   deadline: number,
   key?: string,
 ): Promise<ArtistAlbumsDocument> {
-  const release = await discogsGet<DiscogsReleaseDetail>(`/releases/${releaseId}`, token);
+  const release = await discogsGet<DiscogsReleaseDetail>(`/releases/${releaseId}`, token, deadline);
   const artists = release.artists ?? [];
   const artist = artists[0];
   if (!artist) throw new Error('Release has no artist');
@@ -326,6 +334,7 @@ async function loadArtistAlbums(
     const data = await discogsGet<DiscogsArtistReleasesPage>(
       `/artists/${artist.id}/releases`,
       token,
+      deadline,
       {
         sort: 'year',
         sort_order: 'asc',
@@ -353,6 +362,7 @@ async function loadArtistAlbums(
     const data = await discogsGet<DiscogsMasterVersionsPage>(
       `/masters/${master.masterId}/versions`,
       token,
+      deadline,
       { format: 'Vinyl', per_page: '100' },
     );
     if (isVinylAlbum(data.versions)) document.albums.push(master);
@@ -379,6 +389,7 @@ async function loadPressings(
     const data = await discogsGet<DiscogsMasterVersionsPage>(
       `/masters/${masterId}/versions`,
       token,
+      deadline,
       {
         format: 'Vinyl',
         sort: 'released',
@@ -399,7 +410,11 @@ async function loadPressings(
     if (existing?.detailed) {
       pressings.push(existing);
     } else if (Date.now() < deadline) {
-      const detail = await discogsGet<DiscogsReleaseDetail>(`/releases/${version.id}`, token);
+      const detail = await discogsGet<DiscogsReleaseDetail>(
+        `/releases/${version.id}`,
+        token,
+        deadline,
+      );
       pressings.push(toPressing(version, detail));
     } else {
       complete = false;
@@ -448,22 +463,26 @@ export function refreshOrder(
 async function refreshCollection(
   token: string,
   deadline: number,
-): Promise<{ processed: number; succeeded: number; remaining: number }> {
+): Promise<{ processed: number; succeeded: number; remaining: number; pending: number }> {
   const [catalog, summary] = await Promise.all([readCatalog(), readSummary()]);
   const due = refreshOrder(collectionArtists(catalog.releases), summary);
   let processed = 0;
   let succeeded = 0;
+  let unfinished = 0;
   for (const [key, releaseId] of due) {
     if (Date.now() >= deadline) break;
     try {
-      await loadArtistAlbums(releaseId, token, deadline, key);
+      const document = await loadArtistAlbums(releaseId, token, deadline, key);
       succeeded++;
+      if (!document.complete) unfinished++;
     } catch {
       // Skip artists Discogs can't resolve; they are retried on the next refresh.
+      unfinished++;
     }
     processed++;
   }
-  return { processed, succeeded, remaining: due.length - processed };
+  const remaining = due.length - processed;
+  return { processed, succeeded, remaining, pending: remaining + unfinished };
 }
 
 interface RefreshLock {
@@ -545,7 +564,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       }
       const hop = positiveInteger(req.query.hop) ?? 1;
       const result = await refreshCollection(token, deadline);
-      const continues = result.remaining > 0 && result.succeeded > 0 && hop < MAX_REFRESH_HOPS;
+      // Stop when everything is done, or when the only artists left keep failing.
+      const madeProgress = result.succeeded > 0 || result.remaining > 0;
+      const continues = result.pending > 0 && madeProgress && hop < MAX_REFRESH_HOPS;
       if (continues) {
         await handOff(req, runId, hop + 1);
       } else {
