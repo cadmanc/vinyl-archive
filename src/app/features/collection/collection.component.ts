@@ -76,6 +76,9 @@ export class CollectionComponent implements OnInit, OnDestroy {
     this.masterReleaseService.releaseDetailUpdated?.pipe(takeUntil(this.destroy$)).subscribe(() => {
       void this.refreshReleases();
     });
+    this.db.collectionChanged?.pipe(takeUntil(this.destroy$)).subscribe(() => {
+      void this.refreshReleases();
+    });
   }
 
   private destroy$ = new Subject<void>();

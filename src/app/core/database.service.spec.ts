@@ -137,6 +137,48 @@ describe('DatabaseService', () => {
     });
   });
 
+  describe('removeReleasesNotIn', () => {
+    const storedIds = (ids: number[]) => {
+      (service.releases as any).toCollection = jest.fn().mockReturnValue({
+        primaryKeys: jest.fn().mockResolvedValue(ids),
+      });
+      (service.releases as any).bulkDelete = jest.fn().mockResolvedValue(undefined);
+    };
+
+    it('deletes releases missing from the current collection and notifies listeners', async () => {
+      storedIds([1, 2, 3]);
+      const listener = jest.fn();
+      service.collectionChanged.subscribe(listener);
+
+      const removed = await service.removeReleasesNotIn(new Set([1, 3]));
+
+      expect(removed).toBe(1);
+      expect(service.releases.bulkDelete).toHaveBeenCalledWith([2]);
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('does nothing when every stored release is still in the collection', async () => {
+      storedIds([1, 2]);
+      const listener = jest.fn();
+      service.collectionChanged.subscribe(listener);
+
+      const removed = await service.removeReleasesNotIn(new Set([1, 2, 3]));
+
+      expect(removed).toBe(0);
+      expect(service.releases.bulkDelete).not.toHaveBeenCalled();
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('never wipes the collection when given an empty set', async () => {
+      storedIds([1, 2]);
+
+      const removed = await service.removeReleasesNotIn(new Set());
+
+      expect(removed).toBe(0);
+      expect(service.releases.bulkDelete).not.toHaveBeenCalled();
+    });
+  });
+
   describe('getCollectionCount', () => {
     it('should call releases.count', async () => {
       (service.releases.count as jest.Mock).mockResolvedValue(10);

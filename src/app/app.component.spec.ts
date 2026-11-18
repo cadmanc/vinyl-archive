@@ -218,8 +218,7 @@ describe('AppComponent', () => {
       db.getAllReleases.mockResolvedValue([{ id: 1 } as never]);
 
       await spectator.component.ngOnInit();
-      await Promise.resolve();
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve));
 
       expect(db.addRelease).toHaveBeenCalledTimes(1);
       expect(db.addRelease).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }));
@@ -229,6 +228,29 @@ describe('AppComponent', () => {
           basicInfo: expect.objectContaining({ detailsFetched: true }),
         }),
       ]);
+    });
+
+    it('should remove local releases that are no longer in the Discogs collection', async () => {
+      const config = spectator.inject(DiscogsConfigService);
+      const catalogService = spectator.inject(CatalogService);
+      const db = spectator.inject(DatabaseService);
+      const album = (id: number) => ({
+        id,
+        instanceId: id * 10,
+        basicInfo: { title: `Album ${id}`, artists: [], formats: [] },
+      });
+      config.load.mockResolvedValue({ configured: true, username: 'server-user' });
+      catalogService.load
+        .mockResolvedValueOnce({ schemaVersion: 1, updatedAt: '', releases: [album(1), album(2)] })
+        .mockResolvedValueOnce({ schemaVersion: 1, updatedAt: '', releases: [album(1)] });
+      db.getCollectionCount.mockResolvedValue(2);
+      db.getAllReleases.mockResolvedValue([{ id: 1 }, { id: 2 }] as never);
+
+      await spectator.component.ngOnInit();
+      await new Promise((resolve) => setTimeout(resolve));
+
+      expect(db.removeReleasesNotIn).toHaveBeenNthCalledWith(1, new Set([1, 2]));
+      expect(db.removeReleasesNotIn).toHaveBeenLastCalledWith(new Set([1]));
     });
 
     it('should resume master release service and initialize achievements for returning users', async () => {

@@ -69,6 +69,7 @@ export class AppComponent implements OnInit {
           await this.db.addRelease(this.catalogReleaseToRelease(stored));
         }
       }
+      await this.db.removeReleasesNotIn(new Set(catalog.releases.map((release) => release.id)));
     }
 
     const count = await this.db.getCollectionCount();
@@ -94,6 +95,10 @@ export class AppComponent implements OnInit {
       await this.catalogService.write();
       const refreshedCatalog = await this.catalogService.load();
       if (!refreshedCatalog) return;
+
+      await this.db.removeReleasesNotIn(
+        new Set(refreshedCatalog.releases.map((release) => release.id)),
+      );
 
       const knownIds = new Set(previousCatalog.releases.map((release) => release.id));
       const localReleases = (await this.db.getAllReleases()) ?? [];

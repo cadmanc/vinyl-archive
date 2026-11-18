@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import Dexie, { Table } from 'dexie';
+import { Subject } from 'rxjs';
 import { Release } from '../shared/models/release.model';
 
 export interface AppMetadata {
@@ -13,6 +14,7 @@ export interface AppMetadata {
 export class DatabaseService extends Dexie {
   releases!: Table<Release, number>;
   metadata!: Table<AppMetadata, string>;
+  readonly collectionChanged = new Subject<void>();
 
   constructor() {
     super('DiscogsTrackerDB');
@@ -40,6 +42,21 @@ export class DatabaseService extends Dexie {
 
   async deleteRelease(id: number): Promise<void> {
     await this.releases.delete(id);
+  }
+
+  /**
+   * Delete every stored release whose ID is not in the current Discogs collection.
+   * An empty ID set is ignored so a failed or empty fetch never wipes the collection.
+   */
+  async removeReleasesNotIn(currentIds: ReadonlySet<number>): Promise<number> {
+    if (currentIds.size === 0) return 0;
+    const staleIds = (await this.releases.toCollection().primaryKeys()).filter(
+      (id) => !currentIds.has(id),
+    );
+    if (staleIds.length === 0) return 0;
+    await this.releases.bulkDelete(staleIds);
+    this.collectionChanged.next();
+    return staleIds.length;
   }
 
   async getAllReleases(): Promise<Release[]> {

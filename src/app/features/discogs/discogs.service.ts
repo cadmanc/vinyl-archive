@@ -89,6 +89,7 @@ export class DiscogsService {
         await this.delay(DISCOGS_API_DELAY_MS);
       }
 
+      await this.db.removeReleasesNotIn(currentIds);
       await this.persistCatalog();
 
       await this.db.setLastSyncDate(new Date());
