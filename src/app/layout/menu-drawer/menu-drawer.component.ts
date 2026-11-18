@@ -1,37 +1,17 @@
-import {
-  Component,
-  computed,
-  signal,
-  input,
-  output,
-  OnDestroy,
-  isDevMode,
-  effect,
-} from '@angular/core';
+import { Component, computed, signal, input, output, OnDestroy, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
 import { Subject } from 'rxjs';
 import { DatabaseService } from '../../core/database.service';
-import { DiscogsService } from '../../features/discogs/discogs.service';
 import { FilterService } from '../../shared/services/filter.service';
-import { CredentialsService } from '../../core/credentials.service';
-import { MasterReleaseService } from '../../features/discogs/master-release.service';
-import { SYNC_MESSAGE_DISPLAY_MS } from '../../shared/constants/timing.constants';
-import { APP_VERSION } from '../../shared/constants/app.constants';
 
 @Component({
   selector: 'app-menu-drawer',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule],
   templateUrl: './menu-drawer.component.html',
   styleUrls: ['./menu-drawer.component.scss'],
 })
 export class MenuDrawerComponent implements OnDestroy {
-  lastSyncDate = signal<Date | null>(null);
-  syncing = signal(false);
-  syncMessage = signal('');
-  clearing = signal(false);
-
   // Filter-related signals
   availableGenres = signal<string[]>([]);
   availableDecades = signal<string[]>([]);
@@ -39,27 +19,9 @@ export class MenuDrawerComponent implements OnDestroy {
   availableVinylSizes = signal<string[]>([]);
   availableDiscCounts = signal<number[]>([]);
 
-  // Advanced section collapsed state
-  advancedExpanded = signal(false);
-
-  // Credentials editing signals
-  editingCredentials = signal(false);
-  editUsername = signal('');
-  editToken = signal('');
-  showEditToken = signal(false);
-  credentialsMessage = signal('');
-
-  // Master release sync setting
-  masterReleaseSyncEnabled = signal(true);
-
-  readonly isDevMode = isDevMode();
-  readonly appVersion = APP_VERSION;
-
   isOpen = input.required<boolean>();
   close = output<void>();
-  dataCleared = output<void>();
   filtersChanged = output<void>();
-  openChangelog = output<void>();
 
   selectedGenres = computed(() => new Set(this.filterService.filters().genres));
   selectedDecades = computed(() => new Set(this.filterService.filters().decades));
@@ -73,38 +35,18 @@ export class MenuDrawerComponent implements OnDestroy {
   hasVinylSizes = computed(() => this.availableVinylSizes().length > 0);
   hasDiscCounts = computed(() => this.availableDiscCounts().length > 0);
 
-  timeSinceSync = computed(() => {
-    const lastSync = this.lastSyncDate();
-    if (!lastSync) return 'Never';
-
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const syncDay = new Date(lastSync.getFullYear(), lastSync.getMonth(), lastSync.getDate());
-    const diffDays = Math.floor((today.getTime() - syncDay.getTime()) / (1000 * 60 * 60 * 24));
-
-    if (diffDays === 0) return 'Today';
-    if (diffDays === 1) return 'Yesterday';
-    if (diffDays < 7) return `${diffDays} days ago`;
-    if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-    return `${Math.floor(diffDays / 30)} months ago`;
-  });
-
   private destroy$ = new Subject<void>();
 
   constructor(
     private db: DatabaseService,
-    private discogsService: DiscogsService,
     public filterService: FilterService,
-    public credentialsService: CredentialsService,
-    private masterReleaseService: MasterReleaseService,
   ) {
-    this.loadMenuData();
+    this.loadFilterOptions();
 
     // Reload filter options and settings when drawer opens
     effect(() => {
       if (this.isOpen()) {
         this.loadFilterOptions();
-        this.loadMasterReleaseSyncSetting();
       }
     });
   }
@@ -118,38 +60,7 @@ export class MenuDrawerComponent implements OnDestroy {
     this.close.emit();
   }
 
-  getTimeSinceSync(): string {
-    const lastSync = this.lastSyncDate();
-    if (!lastSync) return 'Never';
-
-    // Compare calendar dates (midnight to midnight)
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const syncDay = new Date(lastSync.getFullYear(), lastSync.getMonth(), lastSync.getDate());
-    const diffDays = Math.floor((today.getTime() - syncDay.getTime()) / (1000 * 60 * 60 * 24));
-
-    if (diffDays === 0) return 'Today';
-    if (diffDays === 1) return 'Yesterday';
-    if (diffDays < 7) return `${diffDays} days ago`;
-    if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-    return `${Math.floor(diffDays / 30)} months ago`;
-  }
-
-  loadMenuData(): void {
-    this.db
-      .getLastSyncDate()
-      .then((lastSync) => {
-        this.lastSyncDate.set(lastSync);
-      })
-      .catch((error) => {
-        console.error('Failed to load last sync date:', error);
-      });
-
-    // Load available genres and decades for filter chips
-    this.loadFilterOptions();
-  }
-
-  private loadFilterOptions(): void {
+  loadFilterOptions(): void {
     this.db
       .getAllReleases()
       .then((releases) => {
@@ -245,113 +156,5 @@ export class MenuDrawerComponent implements OnDestroy {
 
   onBackdropClick() {
     this.closeDrawer();
-  }
-
-  async resync(): Promise<void> {
-    this.syncing.set(true);
-    this.syncMessage.set('Syncing...');
-
-    try {
-      const result = await this.discogsService.syncCollection();
-      if (result.success) {
-        this.syncMessage.set(`✅ Synced ${result.totalSynced} releases!`);
-        this.loadMenuData();
-
-        // Enrich every exact Discogs release, regardless of original-year setting.
-        this.masterReleaseService.startReleaseDetailEnrichment?.();
-
-        // Start background fetch of master release data if enabled
-        if (this.masterReleaseSyncEnabled()) {
-          await this.masterReleaseService.startBackgroundFetch();
-        }
-      } else {
-        this.syncMessage.set(`❌ Sync failed: ${result.error}`);
-      }
-    } catch (error) {
-      console.error('Sync error:', error);
-      this.syncMessage.set('❌ Sync failed: Unexpected error');
-    } finally {
-      setTimeout(() => {
-        this.syncing.set(false);
-        this.syncMessage.set('');
-      }, SYNC_MESSAGE_DISPLAY_MS);
-    }
-  }
-
-  clearData(): void {
-    this.clearing.set(true);
-    this.discogsService
-      .clearSyncedData()
-      .then(() => {
-        this.dataCleared.emit();
-        this.closeDrawer();
-      })
-      .catch((error) => {
-        console.error('Failed to clear data:', error);
-      })
-      .finally(() => {
-        this.clearing.set(false);
-      });
-  }
-
-  toggleAdvanced(): void {
-    this.advancedExpanded.set(!this.advancedExpanded());
-  }
-
-  openChangelogSheet(): void {
-    this.openChangelog.emit();
-  }
-
-  // Credentials editing methods
-  startEditCredentials(): void {
-    this.editUsername.set(this.credentialsService.getUsername() ?? '');
-    this.editToken.set('');
-    this.showEditToken.set(false);
-    this.credentialsMessage.set('');
-    this.editingCredentials.set(true);
-  }
-
-  cancelEditCredentials(): void {
-    this.editingCredentials.set(false);
-    this.editUsername.set('');
-    this.editToken.set('');
-    this.credentialsMessage.set('');
-  }
-
-  saveCredentials(): void {
-    const username = this.editUsername().trim();
-    const token = this.editToken().trim();
-
-    if (!username) {
-      this.credentialsMessage.set('Username is required');
-      return;
-    }
-
-    if (!token) {
-      this.credentialsMessage.set('Token is required');
-      return;
-    }
-
-    this.credentialsService.setCredentials({ username, token });
-    this.credentialsMessage.set('Credentials saved!');
-    this.editingCredentials.set(false);
-
-    setTimeout(() => this.credentialsMessage.set(''), SYNC_MESSAGE_DISPLAY_MS);
-  }
-
-  toggleShowEditToken(): void {
-    this.showEditToken.update((v) => !v);
-  }
-
-  private loadMasterReleaseSyncSetting(): void {
-    this.db.isMasterReleaseSyncEnabled().then((enabled) => {
-      this.masterReleaseSyncEnabled.set(enabled);
-    });
-  }
-
-  toggleMasterReleaseSync(): void {
-    const newValue = !this.masterReleaseSyncEnabled();
-    this.masterReleaseSyncEnabled.set(newValue);
-    this.db.setMasterReleaseSyncEnabled(newValue);
   }
 }

@@ -9,12 +9,7 @@
     (menu)="toggleMenu()"
   ></app-navigation-controls>
 
-  <app-menu-drawer
-    [isOpen]="menuOpen()"
-    (close)="closeMenu()"
-    (dataCleared)="onDataCleared()"
-    (openChangelog)="openChangelog()"
-  ></app-menu-drawer>
+  <app-menu-drawer [isOpen]="menuOpen()" (close)="closeMenu()"></app-menu-drawer>
 
   <app-search-sheet
     [isOpen]="searchOpen()"

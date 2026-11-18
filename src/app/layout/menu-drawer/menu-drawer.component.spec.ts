@@ -1,4 +1,3 @@
-import { fakeAsync, flush } from '@angular/core/testing';
 import { createComponentFactory, Spectator } from '@ngneat/spectator/jest';
 import { signal } from '@angular/core';
 import { MenuDrawerComponent } from './menu-drawer.component';
@@ -8,7 +7,6 @@ import { FilterService } from '../../shared/services/filter.service';
 import { CredentialsService } from '../../core/credentials.service';
 import { MasterReleaseService } from '../../features/discogs/master-release.service';
 import { DEFAULT_FILTERS } from '../../shared/models/filter.model';
-import { SYNC_MESSAGE_DISPLAY_MS } from '../../shared/constants/timing.constants';
 
 describe('MenuDrawerComponent', () => {
   let spectator: Spectator<MenuDrawerComponent>;
@@ -49,8 +47,6 @@ describe('MenuDrawerComponent', () => {
     component: MenuDrawerComponent,
     detectChanges: false,
   });
-
-  const mockLastSyncDate = new Date('2024-01-15T10:00:00Z');
 
   beforeEach(() => {
     mockDatabaseService = {
@@ -112,53 +108,6 @@ describe('MenuDrawerComponent', () => {
     expect(spectator.component).toBeTruthy();
   });
 
-  describe('initialization', () => {
-    it('should have lastSyncDate signal defined', () => {
-      expect(spectator.component.lastSyncDate).toBeDefined();
-      expect(typeof spectator.component.lastSyncDate).toBe('function');
-    });
-
-    it('should initialize with syncing as false', () => {
-      expect(spectator.component.syncing()).toBe(false);
-    });
-
-    it('should initialize with empty syncMessage', () => {
-      expect(spectator.component.syncMessage()).toBe('');
-    });
-
-    it('should load menu data on construction', fakeAsync(() => {
-      const db = mockDatabaseService;
-      db.getLastSyncDate.mockResolvedValue(mockLastSyncDate);
-
-      spectator.detectChanges();
-      flush();
-
-      expect(db.getLastSyncDate).toHaveBeenCalled();
-    }));
-  });
-
-  describe('loadMenuData', () => {
-    it('should load last sync date from database', fakeAsync(() => {
-      const db = mockDatabaseService;
-      db.getLastSyncDate.mockResolvedValue(mockLastSyncDate);
-
-      spectator.component.loadMenuData();
-      flush();
-
-      expect(spectator.component.lastSyncDate()).toEqual(mockLastSyncDate);
-    }));
-
-    it('should handle null last sync date', fakeAsync(() => {
-      const db = mockDatabaseService;
-      db.getLastSyncDate.mockResolvedValue(null);
-
-      spectator.component.loadMenuData();
-      flush();
-
-      expect(spectator.component.lastSyncDate()).toBeNull();
-    }));
-  });
-
   describe('closeDrawer', () => {
     it('should emit close event', () => {
       const closeSpy = jest.fn();
@@ -178,308 +127,6 @@ describe('MenuDrawerComponent', () => {
       spectator.component.onBackdropClick();
 
       expect(closeSpy).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('timeSinceSync', () => {
-    beforeEach(() => {
-      jest.useFakeTimers();
-      jest.setSystemTime(new Date('2024-01-20T10:00:00Z'));
-    });
-
-    afterEach(() => {
-      jest.useRealTimers();
-    });
-
-    it('should return "Never" when lastSyncDate is null', () => {
-      spectator.component.lastSyncDate.set(null);
-
-      const result = spectator.component.timeSinceSync();
-
-      expect(result).toBe('Never');
-    });
-
-    it('should return "Today" when synced today', () => {
-      const today = new Date('2024-01-20T08:00:00Z');
-      spectator.component.lastSyncDate.set(today);
-
-      const result = spectator.component.timeSinceSync();
-
-      expect(result).toBe('Today');
-    });
-
-    it('should return "Yesterday" when synced yesterday', () => {
-      const yesterday = new Date('2024-01-19T10:00:00Z');
-      spectator.component.lastSyncDate.set(yesterday);
-
-      const result = spectator.component.timeSinceSync();
-
-      expect(result).toBe('Yesterday');
-    });
-
-    it('should return "Yesterday" for previous calendar day even if less than 24 hours ago', () => {
-      // System time is 2024-01-20 at 10:00 AM UTC
-      // Sync was at 11:00 PM UTC on Jan 19 (only 11 hours ago, but different calendar day)
-      const lastNight = new Date('2024-01-19T23:00:00Z');
-      spectator.component.lastSyncDate.set(lastNight);
-
-      const result = spectator.component.timeSinceSync();
-
-      expect(result).toBe('Yesterday');
-    });
-
-    it('should return days ago for 2-6 days', () => {
-      const threeDaysAgo = new Date('2024-01-17T10:00:00Z');
-      spectator.component.lastSyncDate.set(threeDaysAgo);
-
-      const result = spectator.component.timeSinceSync();
-
-      expect(result).toBe('3 days ago');
-    });
-
-    it('should return weeks ago for 7-29 days', () => {
-      const twoWeeksAgo = new Date('2024-01-06T10:00:00Z');
-      spectator.component.lastSyncDate.set(twoWeeksAgo);
-
-      const result = spectator.component.timeSinceSync();
-
-      expect(result).toBe('2 weeks ago');
-    });
-
-    it('should return months ago for 30+ days', () => {
-      const twoMonthsAgo = new Date('2023-11-20T10:00:00Z');
-      spectator.component.lastSyncDate.set(twoMonthsAgo);
-
-      const result = spectator.component.timeSinceSync();
-
-      expect(result).toBe('2 months ago');
-    });
-  });
-
-  describe('resync', () => {
-    it('should set syncing to true when resync starts', () => {
-      const discogsService = mockDiscogsService;
-      discogsService.syncCollection.mockReturnValue(new Promise(() => {}));
-
-      spectator.component.resync();
-
-      expect(spectator.component.syncing()).toBe(true);
-    });
-
-    it('should set initial sync message', () => {
-      const discogsService = mockDiscogsService;
-      discogsService.syncCollection.mockReturnValue(new Promise(() => {}));
-
-      spectator.component.resync();
-
-      expect(spectator.component.syncMessage()).toBe('Syncing...');
-    });
-
-    it('should display success message on successful sync', async () => {
-      jest.useFakeTimers();
-      const discogsService = mockDiscogsService;
-      const db = mockDatabaseService;
-
-      discogsService.syncCollection.mockResolvedValue({
-        success: true,
-        totalSynced: 150,
-      });
-      db.getLastSyncDate.mockResolvedValue(new Date());
-
-      spectator.component.resync();
-
-      // Wait for promise to resolve
-      await Promise.resolve();
-      await Promise.resolve();
-
-      expect(spectator.component.syncMessage()).toBe('✅ Synced 150 releases!');
-
-      jest.useRealTimers();
-    });
-
-    it('should reload menu data after successful sync', fakeAsync(() => {
-      const discogsService = mockDiscogsService;
-      const db = mockDatabaseService;
-
-      discogsService.syncCollection.mockResolvedValue({
-        success: true,
-        totalSynced: 150,
-      });
-      db.getLastSyncDate.mockResolvedValue(mockLastSyncDate);
-
-      spectator.component.resync();
-      flush();
-
-      expect(db.getLastSyncDate).toHaveBeenCalled();
-    }));
-
-    it('should display error message on failed sync', async () => {
-      jest.useFakeTimers();
-      const discogsService = mockDiscogsService;
-      discogsService.syncCollection.mockResolvedValue({
-        success: false,
-        totalSynced: 0,
-        error: 'Network timeout',
-      });
-
-      spectator.component.resync();
-
-      // Wait for promise to resolve
-      await Promise.resolve();
-      await Promise.resolve();
-
-      expect(spectator.component.syncMessage()).toBe('❌ Sync failed: Network timeout');
-
-      jest.useRealTimers();
-    });
-
-    it('should not reload menu data on failed sync', fakeAsync(() => {
-      const discogsService = mockDiscogsService;
-      const db = mockDatabaseService;
-
-      discogsService.syncCollection.mockResolvedValue({
-        success: false,
-        totalSynced: 0,
-        error: 'Network timeout',
-      });
-
-      // Clear previous calls from constructor
-      db.getLastSyncDate.mockClear();
-
-      spectator.component.resync();
-      flush();
-
-      expect(db.getLastSyncDate).not.toHaveBeenCalled();
-    }));
-
-    it('should clear syncing state after 3 seconds', async () => {
-      jest.useFakeTimers();
-      const discogsService = mockDiscogsService;
-      const db = mockDatabaseService;
-
-      discogsService.syncCollection.mockResolvedValue({
-        success: true,
-        totalSynced: 100,
-      });
-      db.getLastSyncDate.mockResolvedValue(new Date());
-
-      spectator.component.resync();
-
-      // Wait for all promises to resolve
-      await jest.runAllTimersAsync();
-
-      expect(spectator.component.syncing()).toBe(false);
-
-      jest.useRealTimers();
-    });
-
-    it('should clear sync message after 3 seconds', async () => {
-      jest.useFakeTimers();
-      const discogsService = mockDiscogsService;
-      const db = mockDatabaseService;
-
-      discogsService.syncCollection.mockResolvedValue({
-        success: true,
-        totalSynced: 100,
-      });
-      db.getLastSyncDate.mockResolvedValue(new Date());
-
-      spectator.component.resync();
-
-      // Wait for all promises and timers to complete
-      await jest.runAllTimersAsync();
-
-      expect(spectator.component.syncMessage()).toBe('');
-
-      jest.useRealTimers();
-    });
-
-    it('should handle unexpected sync error', async () => {
-      jest.useFakeTimers();
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
-      const discogsService = mockDiscogsService;
-      discogsService.syncCollection.mockRejectedValue(new Error('Unexpected error'));
-
-      spectator.component.resync();
-
-      await jest.runAllTimersAsync();
-
-      expect(consoleSpy).toHaveBeenCalledWith('Sync error:', expect.any(Error));
-      expect(spectator.component.syncMessage()).toBe('');
-      expect(spectator.component.syncing()).toBe(false);
-
-      consoleSpy.mockRestore();
-      jest.useRealTimers();
-    });
-
-    it('should start master release fetch after successful sync when enabled', async () => {
-      jest.useFakeTimers();
-      mockDiscogsService.syncCollection.mockResolvedValue({
-        success: true,
-        totalSynced: 100,
-      });
-      mockDatabaseService.getLastSyncDate.mockResolvedValue(new Date());
-      spectator.component.masterReleaseSyncEnabled.set(true);
-
-      spectator.component.resync();
-
-      await jest.runAllTimersAsync();
-
-      expect(mockMasterReleaseService.startBackgroundFetch).toHaveBeenCalled();
-
-      jest.useRealTimers();
-    });
-
-    it('should not start master release fetch after successful sync when disabled', async () => {
-      jest.useFakeTimers();
-      mockDiscogsService.syncCollection.mockResolvedValue({
-        success: true,
-        totalSynced: 100,
-      });
-      mockDatabaseService.getLastSyncDate.mockResolvedValue(new Date());
-      spectator.component.masterReleaseSyncEnabled.set(false);
-
-      spectator.component.resync();
-
-      await jest.runAllTimersAsync();
-
-      expect(mockMasterReleaseService.startBackgroundFetch).not.toHaveBeenCalled();
-
-      jest.useRealTimers();
-    });
-
-    it('should not start master release fetch on failed sync even when enabled', async () => {
-      jest.useFakeTimers();
-      mockDiscogsService.syncCollection.mockResolvedValue({
-        success: false,
-        totalSynced: 0,
-        error: 'Network error',
-      });
-      spectator.component.masterReleaseSyncEnabled.set(true);
-
-      spectator.component.resync();
-
-      await jest.runAllTimersAsync();
-
-      expect(mockMasterReleaseService.startBackgroundFetch).not.toHaveBeenCalled();
-
-      jest.useRealTimers();
-    });
-  });
-
-  describe('loadMenuData error handling', () => {
-    it('should handle getLastSyncDate error gracefully', async () => {
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
-      mockDatabaseService.getLastSyncDate.mockRejectedValue(new Error('Database error'));
-
-      spectator.component.loadMenuData();
-
-      await Promise.resolve();
-      await Promise.resolve();
-
-      expect(consoleSpy).toHaveBeenCalledWith('Failed to load last sync date:', expect.any(Error));
-
-      consoleSpy.mockRestore();
     });
   });
 
@@ -550,7 +197,7 @@ describe('MenuDrawerComponent', () => {
     it('should extract unique genres from releases', async () => {
       mockDatabaseService.getAllReleases.mockResolvedValue(mockReleasesWithFilters);
 
-      spectator.component.loadMenuData();
+      spectator.component.loadFilterOptions();
 
       await Promise.resolve();
       await Promise.resolve();
@@ -565,7 +212,7 @@ describe('MenuDrawerComponent', () => {
     it('should sort genres alphabetically', async () => {
       mockDatabaseService.getAllReleases.mockResolvedValue(mockReleasesWithFilters);
 
-      spectator.component.loadMenuData();
+      spectator.component.loadFilterOptions();
 
       await Promise.resolve();
       await Promise.resolve();
@@ -577,7 +224,7 @@ describe('MenuDrawerComponent', () => {
     it('should extract unique decades from releases', async () => {
       mockDatabaseService.getAllReleases.mockResolvedValue(mockReleasesWithFilters);
 
-      spectator.component.loadMenuData();
+      spectator.component.loadFilterOptions();
 
       await Promise.resolve();
       await Promise.resolve();
@@ -591,7 +238,7 @@ describe('MenuDrawerComponent', () => {
     it('should sort decades chronologically', async () => {
       mockDatabaseService.getAllReleases.mockResolvedValue(mockReleasesWithFilters);
 
-      spectator.component.loadMenuData();
+      spectator.component.loadFilterOptions();
 
       await Promise.resolve();
       await Promise.resolve();
@@ -603,7 +250,7 @@ describe('MenuDrawerComponent', () => {
     it('should skip releases without year for decades', async () => {
       mockDatabaseService.getAllReleases.mockResolvedValue(mockReleasesWithFilters);
 
-      spectator.component.loadMenuData();
+      spectator.component.loadFilterOptions();
 
       await Promise.resolve();
       await Promise.resolve();
@@ -616,7 +263,7 @@ describe('MenuDrawerComponent', () => {
     it('should handle releases with undefined genres', async () => {
       mockDatabaseService.getAllReleases.mockResolvedValue(mockReleasesWithFilters);
 
-      spectator.component.loadMenuData();
+      spectator.component.loadFilterOptions();
 
       await Promise.resolve();
       await Promise.resolve();
@@ -629,7 +276,7 @@ describe('MenuDrawerComponent', () => {
       const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
       mockDatabaseService.getAllReleases.mockRejectedValue(new Error('Database error'));
 
-      spectator.component.loadMenuData();
+      spectator.component.loadFilterOptions();
 
       await Promise.resolve();
       await Promise.resolve();
@@ -688,294 +335,9 @@ describe('MenuDrawerComponent', () => {
     });
   });
 
-  describe('clearData', () => {
-    it('should set clearing to true when starting', () => {
-      mockDiscogsService.clearSyncedData.mockReturnValue(new Promise(() => {}));
-
-      spectator.component.clearData();
-
-      expect(spectator.component.clearing()).toBe(true);
-    });
-
-    it('should emit dataCleared on success', async () => {
-      const dataClearedSpy = jest.fn();
-      spectator.component.dataCleared.subscribe(dataClearedSpy);
-      mockDiscogsService.clearSyncedData.mockResolvedValue(undefined);
-
-      spectator.component.clearData();
-
-      await Promise.resolve();
-      await Promise.resolve();
-
-      expect(dataClearedSpy).toHaveBeenCalledTimes(1);
-    });
-
-    it('should close drawer on success', async () => {
-      const closeSpy = jest.fn();
-      spectator.component.close.subscribe(closeSpy);
-      mockDiscogsService.clearSyncedData.mockResolvedValue(undefined);
-
-      spectator.component.clearData();
-
-      await Promise.resolve();
-      await Promise.resolve();
-
-      expect(closeSpy).toHaveBeenCalledTimes(1);
-    });
-
-    it('should set clearing to false after success', async () => {
-      mockDiscogsService.clearSyncedData.mockResolvedValue(undefined);
-
-      spectator.component.clearData();
-
-      await Promise.resolve();
-      await Promise.resolve();
-
-      expect(spectator.component.clearing()).toBe(false);
-    });
-
-    it('should handle clearData error gracefully', async () => {
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
-      mockDiscogsService.clearSyncedData.mockRejectedValue(new Error('Clear error'));
-
-      spectator.component.clearData();
-
-      await Promise.resolve();
-      await Promise.resolve();
-
-      expect(consoleSpy).toHaveBeenCalledWith('Failed to clear data:', expect.any(Error));
-      expect(spectator.component.clearing()).toBe(false);
-
-      consoleSpy.mockRestore();
-    });
-  });
-
-  describe('toggleAdvanced', () => {
-    it('should toggle advancedExpanded from false to true', () => {
-      expect(spectator.component.advancedExpanded()).toBe(false);
-
-      spectator.component.toggleAdvanced();
-
-      expect(spectator.component.advancedExpanded()).toBe(true);
-    });
-
-    it('should toggle advancedExpanded from true to false', () => {
-      spectator.component.advancedExpanded.set(true);
-
-      spectator.component.toggleAdvanced();
-
-      expect(spectator.component.advancedExpanded()).toBe(false);
-    });
-  });
-
   describe('ngOnDestroy', () => {
     it('should complete destroy$ subject', () => {
       expect(() => spectator.component.ngOnDestroy()).not.toThrow();
-    });
-  });
-
-  describe('credentials editing', () => {
-    it('should initialize editingCredentials as false', () => {
-      expect(spectator.component.editingCredentials()).toBe(false);
-    });
-
-    describe('startEditCredentials', () => {
-      it('should set editingCredentials to true', () => {
-        spectator.component.startEditCredentials();
-
-        expect(spectator.component.editingCredentials()).toBe(true);
-      });
-
-      it('should populate editUsername from credentials service', () => {
-        mockCredentialsService.getUsername.mockReturnValue('existinguser');
-
-        spectator.component.startEditCredentials();
-
-        expect(spectator.component.editUsername()).toBe('existinguser');
-      });
-
-      it('should clear editToken', () => {
-        spectator.component.editToken.set('oldtoken');
-
-        spectator.component.startEditCredentials();
-
-        expect(spectator.component.editToken()).toBe('');
-      });
-
-      it('should reset showEditToken to false', () => {
-        spectator.component.showEditToken.set(true);
-
-        spectator.component.startEditCredentials();
-
-        expect(spectator.component.showEditToken()).toBe(false);
-      });
-
-      it('should clear credentialsMessage', () => {
-        spectator.component.credentialsMessage.set('Previous message');
-
-        spectator.component.startEditCredentials();
-
-        expect(spectator.component.credentialsMessage()).toBe('');
-      });
-
-      it('should handle null username from credentials service', () => {
-        mockCredentialsService.getUsername.mockReturnValue(null);
-
-        spectator.component.startEditCredentials();
-
-        expect(spectator.component.editUsername()).toBe('');
-      });
-    });
-
-    describe('cancelEditCredentials', () => {
-      it('should set editingCredentials to false', () => {
-        spectator.component.editingCredentials.set(true);
-
-        spectator.component.cancelEditCredentials();
-
-        expect(spectator.component.editingCredentials()).toBe(false);
-      });
-
-      it('should clear editUsername', () => {
-        spectator.component.editUsername.set('someuser');
-
-        spectator.component.cancelEditCredentials();
-
-        expect(spectator.component.editUsername()).toBe('');
-      });
-
-      it('should clear editToken', () => {
-        spectator.component.editToken.set('sometoken');
-
-        spectator.component.cancelEditCredentials();
-
-        expect(spectator.component.editToken()).toBe('');
-      });
-
-      it('should clear credentialsMessage', () => {
-        spectator.component.credentialsMessage.set('Some message');
-
-        spectator.component.cancelEditCredentials();
-
-        expect(spectator.component.credentialsMessage()).toBe('');
-      });
-    });
-
-    describe('saveCredentials', () => {
-      it('should show error when username is empty', () => {
-        spectator.component.editUsername.set('');
-        spectator.component.editToken.set('validtoken');
-
-        spectator.component.saveCredentials();
-
-        expect(spectator.component.credentialsMessage()).toBe('Username is required');
-        expect(mockCredentialsService.setCredentials).not.toHaveBeenCalled();
-      });
-
-      it('should show error when username is whitespace only', () => {
-        spectator.component.editUsername.set('   ');
-        spectator.component.editToken.set('validtoken');
-
-        spectator.component.saveCredentials();
-
-        expect(spectator.component.credentialsMessage()).toBe('Username is required');
-      });
-
-      it('should show error when token is empty', () => {
-        spectator.component.editUsername.set('validuser');
-        spectator.component.editToken.set('');
-
-        spectator.component.saveCredentials();
-
-        expect(spectator.component.credentialsMessage()).toBe('Token is required');
-        expect(mockCredentialsService.setCredentials).not.toHaveBeenCalled();
-      });
-
-      it('should show error when token is whitespace only', () => {
-        spectator.component.editUsername.set('validuser');
-        spectator.component.editToken.set('   ');
-
-        spectator.component.saveCredentials();
-
-        expect(spectator.component.credentialsMessage()).toBe('Token is required');
-      });
-
-      it('should save credentials when both fields are valid', () => {
-        spectator.component.editUsername.set('newuser');
-        spectator.component.editToken.set('newtoken');
-
-        spectator.component.saveCredentials();
-
-        expect(mockCredentialsService.setCredentials).toHaveBeenCalledWith({
-          username: 'newuser',
-          token: 'newtoken',
-        });
-      });
-
-      it('should trim whitespace from username and token', () => {
-        spectator.component.editUsername.set('  newuser  ');
-        spectator.component.editToken.set('  newtoken  ');
-
-        spectator.component.saveCredentials();
-
-        expect(mockCredentialsService.setCredentials).toHaveBeenCalledWith({
-          username: 'newuser',
-          token: 'newtoken',
-        });
-      });
-
-      it('should show success message after saving', () => {
-        spectator.component.editUsername.set('newuser');
-        spectator.component.editToken.set('newtoken');
-
-        spectator.component.saveCredentials();
-
-        expect(spectator.component.credentialsMessage()).toBe('Credentials saved!');
-      });
-
-      it('should set editingCredentials to false after saving', () => {
-        spectator.component.editingCredentials.set(true);
-        spectator.component.editUsername.set('newuser');
-        spectator.component.editToken.set('newtoken');
-
-        spectator.component.saveCredentials();
-
-        expect(spectator.component.editingCredentials()).toBe(false);
-      });
-
-      it('should clear success message after timeout', async () => {
-        jest.useFakeTimers();
-        spectator.component.editUsername.set('newuser');
-        spectator.component.editToken.set('newtoken');
-
-        spectator.component.saveCredentials();
-
-        expect(spectator.component.credentialsMessage()).toBe('Credentials saved!');
-
-        jest.advanceTimersByTime(SYNC_MESSAGE_DISPLAY_MS);
-
-        expect(spectator.component.credentialsMessage()).toBe('');
-
-        jest.useRealTimers();
-      });
-    });
-
-    describe('toggleShowEditToken', () => {
-      it('should toggle showEditToken from false to true', () => {
-        spectator.component.showEditToken.set(false);
-
-        spectator.component.toggleShowEditToken();
-
-        expect(spectator.component.showEditToken()).toBe(true);
-      });
-
-      it('should toggle showEditToken from true to false', () => {
-        spectator.component.showEditToken.set(true);
-
-        spectator.component.toggleShowEditToken();
-
-        expect(spectator.component.showEditToken()).toBe(false);
-      });
     });
   });
 
@@ -1024,7 +386,7 @@ describe('MenuDrawerComponent', () => {
     it('should extract unique original decades from releases', async () => {
       mockDatabaseService.getAllReleases.mockResolvedValue(mockReleasesWithOriginalDecades);
 
-      spectator.component.loadMenuData();
+      spectator.component.loadFilterOptions();
 
       await Promise.resolve();
       await Promise.resolve();
@@ -1038,7 +400,7 @@ describe('MenuDrawerComponent', () => {
     it('should sort original decades chronologically', async () => {
       mockDatabaseService.getAllReleases.mockResolvedValue(mockReleasesWithOriginalDecades);
 
-      spectator.component.loadMenuData();
+      spectator.component.loadFilterOptions();
 
       await Promise.resolve();
       await Promise.resolve();
@@ -1072,7 +434,7 @@ describe('MenuDrawerComponent', () => {
       ];
       mockDatabaseService.getAllReleases.mockResolvedValue(releasesWithMissingOriginalYear);
 
-      spectator.component.loadMenuData();
+      spectator.component.loadFilterOptions();
 
       await Promise.resolve();
       await Promise.resolve();
@@ -1177,7 +539,7 @@ describe('MenuDrawerComponent', () => {
     it('should extract unique disc counts from releases', async () => {
       mockDatabaseService.getAllReleases.mockResolvedValue(mockReleasesWithDiscCounts);
 
-      spectator.component.loadMenuData();
+      spectator.component.loadFilterOptions();
 
       await Promise.resolve();
       await Promise.resolve();
@@ -1191,7 +553,7 @@ describe('MenuDrawerComponent', () => {
     it('should sort disc counts numerically', async () => {
       mockDatabaseService.getAllReleases.mockResolvedValue(mockReleasesWithDiscCounts);
 
-      spectator.component.loadMenuData();
+      spectator.component.loadFilterOptions();
 
       await Promise.resolve();
       await Promise.resolve();
@@ -1203,7 +565,7 @@ describe('MenuDrawerComponent', () => {
     it('should skip releases without discCount', async () => {
       mockDatabaseService.getAllReleases.mockResolvedValue(mockReleasesWithDiscCounts);
 
-      spectator.component.loadMenuData();
+      spectator.component.loadFilterOptions();
 
       await Promise.resolve();
       await Promise.resolve();
@@ -1238,68 +600,6 @@ describe('MenuDrawerComponent', () => {
 
         expect(spectator.component.selectedDiscCounts().has(3)).toBe(false);
       });
-    });
-  });
-
-  describe('master release sync toggle', () => {
-    it('should initialize masterReleaseSyncEnabled as true', () => {
-      expect(spectator.component.masterReleaseSyncEnabled()).toBe(true);
-    });
-
-    it('should load master release sync setting when drawer opens', async () => {
-      mockDatabaseService.isMasterReleaseSyncEnabled.mockResolvedValue(false);
-
-      spectator.setInput('isOpen', true);
-      spectator.detectChanges();
-
-      await Promise.resolve();
-
-      expect(mockDatabaseService.isMasterReleaseSyncEnabled).toHaveBeenCalled();
-    });
-
-    describe('toggleMasterReleaseSync', () => {
-      it('should toggle from true to false', () => {
-        spectator.component.masterReleaseSyncEnabled.set(true);
-
-        spectator.component.toggleMasterReleaseSync();
-
-        expect(spectator.component.masterReleaseSyncEnabled()).toBe(false);
-      });
-
-      it('should toggle from false to true', () => {
-        spectator.component.masterReleaseSyncEnabled.set(false);
-
-        spectator.component.toggleMasterReleaseSync();
-
-        expect(spectator.component.masterReleaseSyncEnabled()).toBe(true);
-      });
-
-      it('should save setting to database when toggled', () => {
-        spectator.component.masterReleaseSyncEnabled.set(true);
-
-        spectator.component.toggleMasterReleaseSync();
-
-        expect(mockDatabaseService.setMasterReleaseSyncEnabled).toHaveBeenCalledWith(false);
-      });
-
-      it('should save true when toggled from false', () => {
-        spectator.component.masterReleaseSyncEnabled.set(false);
-
-        spectator.component.toggleMasterReleaseSync();
-
-        expect(mockDatabaseService.setMasterReleaseSyncEnabled).toHaveBeenCalledWith(true);
-      });
-    });
-  });
-
-  describe('openChangelogSheet', () => {
-    it('should emit openChangelog output when called', () => {
-      const emitSpy = jest.fn();
-      spectator.component.openChangelog.subscribe(emitSpy);
-
-      spectator.component.openChangelogSheet();
-
-      expect(emitSpy).toHaveBeenCalled();
     });
   });
 });
