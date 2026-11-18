@@ -68,11 +68,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     res.status(upstreamResponse.status).send(responseBody(contentType, body));
   } catch (error) {
     const status = error instanceof DOMException && error.name === 'AbortError' ? 504 : 502;
-    res
-      .status(status)
-      .json({
-        error: status === 504 ? 'MusicBrainz request timed out' : 'MusicBrainz request failed',
-      });
+    res.status(status).json({
+      error: status === 504 ? 'MusicBrainz request timed out' : 'MusicBrainz request failed',
+    });
   } finally {
     clearTimeout(timeout);
   }

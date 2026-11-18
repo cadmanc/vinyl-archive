@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/missing-albums.ts": {
+      "maxDuration": 300
+    }
+  }
+}

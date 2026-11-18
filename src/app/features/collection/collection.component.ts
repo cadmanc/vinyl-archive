@@ -6,6 +6,13 @@ import { DatabaseService } from '../../core/database.service';
 import { Release } from '../../shared/models/release.model';
 import { MasterReleaseService } from '../discogs/master-release.service';
 import { FilterService } from '../../shared/services/filter.service';
+import {
+  MissingAlbum,
+  MissingAlbumsService,
+  pressingLabel,
+  pressingSummary,
+  VinylPressing,
+} from './missing-albums.service';
 import { MenuDrawerComponent } from '../../layout/menu-drawer/menu-drawer.component';
 import { SearchSheetComponent } from '../player/search-sheet/search-sheet.component';
 import { PlayHistorySheetComponent } from '../player/play-history-sheet/play-history-sheet.component';
@@ -16,6 +23,7 @@ import { NavigationControlsComponent } from '../../layout/navigation-controls/na
 import {
   artistSection,
   COLLECTION_LETTERS,
+  CollectionGroup,
   groupCollection,
   sortCollection,
 } from './collection.utils';
@@ -37,6 +45,25 @@ const PACIFIC_TIME = new Intl.DateTimeFormat('en-US', {
 
 export function formatPacificDateTime(date: Date): string {
   return `${PACIFIC_DATE.format(date)} · ${PACIFIC_TIME.format(date)}`;
+}
+
+// Missing albums is being validated on these artists before it is enabled for every artist.
+const MISSING_ALBUMS_TEST_ARTISTS = new Set(['nirvana']);
+const MISSING_ALBUMS_POLL_MS = 2000;
+
+type LoadState<T> =
+  | { status: 'loading'; checked?: number; total?: number }
+  | { status: 'ready'; value: T }
+  | { status: 'error' };
+
+function toggled<T>(set: Set<T>, value: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(value)) {
+    next.delete(value);
+  } else {
+    next.add(value);
+  }
+  return next;
 }
 
 function countCopies(releases: Release[]): number {
@@ -90,6 +117,20 @@ export class CollectionComponent implements OnInit, OnDestroy {
   availableSections = computed(
     () => new Set(this.groups().map((group) => artistSection(group.heading))),
   );
+  ownedMasterIds = computed(
+    () =>
+      new Set(
+        this.releases()
+          .map((release) => release.basicInfo.masterId)
+          .filter((id): id is number => id !== undefined),
+      ),
+  );
+  artistAlbums = signal<Record<string, LoadState<MissingAlbum[]>>>({});
+  expandedArtists = signal<Set<string>>(new Set());
+  albumPressings = signal<Record<number, LoadState<VinylPressing[]>>>({});
+  expandedAlbums = signal<Set<number>>(new Set());
+  readonly pressingSummary = pressingSummary;
+  readonly pressingLabel = pressingLabel;
   get detailProgress() {
     return (
       this.masterReleaseService.releaseDetailProgress?.() ?? {
@@ -105,6 +146,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
     private masterReleaseService: MasterReleaseService,
     private router: Router,
     private filterService: FilterService,
+    private missingAlbumsService: MissingAlbumsService,
   ) {
     this.masterReleaseService.releaseDetailUpdated?.pipe(takeUntil(this.destroy$)).subscribe(() => {
       void this.refreshReleases();
@@ -182,6 +224,119 @@ export class CollectionComponent implements OnInit, OnDestroy {
 
   clearFilters(): void {
     this.filterService.resetFilters();
+  }
+
+  supportsMissingAlbums(group: CollectionGroup): boolean {
+    return MISSING_ALBUMS_TEST_ARTISTS.has(group.key);
+  }
+
+  isArtistExpanded(key: string): boolean {
+    return this.expandedArtists().has(key);
+  }
+
+  missingAlbums(group: CollectionGroup): MissingAlbum[] {
+    const state = this.artistAlbums()[group.key];
+    if (state?.status !== 'ready') return [];
+    const owned = this.ownedMasterIds();
+    return state.value.filter((album) => !owned.has(album.masterId));
+  }
+
+  artistAlbumsState(key: string): LoadState<MissingAlbum[]> | undefined {
+    return this.artistAlbums()[key];
+  }
+
+  artistProgress(key: string): string {
+    const state = this.artistAlbums()[key];
+    return state?.status === 'loading' && state.total
+      ? `(${state.checked} of ${state.total} titles checked)`
+      : '';
+  }
+
+  missingSummary(group: CollectionGroup): string {
+    const state = this.artistAlbums()[group.key];
+    if (state?.status === 'ready') return `${this.missingAlbums(group).length} missing`;
+    if (state?.status === 'loading') return 'Checking Discogs…';
+    return 'Missing albums';
+  }
+
+  toggleArtistMissing(group: CollectionGroup): void {
+    this.expandedArtists.update((current) => toggled(current, group.key));
+    const state = this.artistAlbums()[group.key];
+    if (this.isArtistExpanded(group.key) && (!state || state.status === 'error')) {
+      void this.loadArtistAlbums(group);
+    }
+  }
+
+  isAlbumExpanded(masterId: number): boolean {
+    return this.expandedAlbums().has(masterId);
+  }
+
+  pressingsState(masterId: number): LoadState<VinylPressing[]> | undefined {
+    return this.albumPressings()[masterId];
+  }
+
+  readyPressings(masterId: number): VinylPressing[] {
+    const state = this.albumPressings()[masterId];
+    return state?.status === 'ready' ? state.value : [];
+  }
+
+  toggleAlbum(masterId: number): void {
+    this.expandedAlbums.update((current) => toggled(current, masterId));
+    const state = this.albumPressings()[masterId];
+    if (this.isAlbumExpanded(masterId) && (!state || state.status === 'error')) {
+      void this.loadPressings(masterId);
+    }
+  }
+
+  retryArtistAlbums(group: CollectionGroup): void {
+    void this.loadArtistAlbums(group);
+  }
+
+  retryPressings(masterId: number): void {
+    void this.loadPressings(masterId);
+  }
+
+  private async loadArtistAlbums(group: CollectionGroup): Promise<void> {
+    const releaseId = group.releases[0]?.id;
+    if (!releaseId) return;
+    this.setArtistAlbums(group.key, { status: 'loading' });
+    try {
+      // A first check of a large discography spans several requests; the server saves progress.
+      for (;;) {
+        const result = await this.missingAlbumsService.loadArtistAlbums(releaseId);
+        if (result.complete) {
+          this.setArtistAlbums(group.key, { status: 'ready', value: result.albums });
+          return;
+        }
+        this.setArtistAlbums(group.key, {
+          status: 'loading',
+          checked: result.checked,
+          total: result.total,
+        });
+        await new Promise((resolve) => setTimeout(resolve, MISSING_ALBUMS_POLL_MS));
+      }
+    } catch (error) {
+      console.error('Failed to load missing albums:', error);
+      this.setArtistAlbums(group.key, { status: 'error' });
+    }
+  }
+
+  private async loadPressings(masterId: number): Promise<void> {
+    this.albumPressings.update((current) => ({ ...current, [masterId]: { status: 'loading' } }));
+    try {
+      const pressings = await this.missingAlbumsService.loadPressings(masterId);
+      this.albumPressings.update((current) => ({
+        ...current,
+        [masterId]: { status: 'ready', value: pressings },
+      }));
+    } catch (error) {
+      console.error('Failed to load vinyl pressings:', error);
+      this.albumPressings.update((current) => ({ ...current, [masterId]: { status: 'error' } }));
+    }
+  }
+
+  private setArtistAlbums(key: string, state: LoadState<MissingAlbum[]>): void {
+    this.artistAlbums.update((current) => ({ ...current, [key]: state }));
   }
 
   toggleSearch(): void {

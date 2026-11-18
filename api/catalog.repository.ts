@@ -50,7 +50,7 @@ function isCatalogDocument(value: unknown): value is CatalogDocument {
   );
 }
 
-async function readBlobText(stream: ReadableStream<Uint8Array>): Promise<string> {
+export async function readBlobText(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let text = '';

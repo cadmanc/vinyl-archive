@@ -87,7 +87,115 @@
             @for (group of groups(); track group.key) {
               @if (sectionKey(group.heading) === letter) {
                 <section class="artist-group" [attr.aria-label]="group.heading">
-                  <h3>{{ group.heading }}</h3>
+                  <div class="artist-heading">
+                    <h3>{{ group.heading }}</h3>
+                    @if (supportsMissingAlbums(group)) {
+                      <button
+                        type="button"
+                        class="missing-toggle"
+                        [attr.aria-expanded]="isArtistExpanded(group.key)"
+                        (click)="toggleArtistMissing(group)"
+                      >
+                        {{ missingSummary(group) }}
+                        <span aria-hidden="true">{{
+                          isArtistExpanded(group.key) ? '&#x25B2;' : '&#x25BC;'
+                        }}</span>
+                      </button>
+                    }
+                  </div>
+                  @if (isArtistExpanded(group.key)) {
+                    @let albumsState = artistAlbumsState(group.key);
+                    <div class="missing-albums">
+                      @if (albumsState?.status === 'loading') {
+                        <p class="missing-status">
+                          Checking Discogs for missing albums. The first check can take a minute or
+                          two.
+                          {{ artistProgress(group.key) }}
+                        </p>
+                      } @else if (albumsState?.status === 'error') {
+                        <p class="missing-status">
+                          Couldn't reach Discogs.
+                          <button
+                            type="button"
+                            class="inline-action"
+                            (click)="retryArtistAlbums(group)"
+                          >
+                            Try again
+                          </button>
+                        </p>
+                      } @else if (missingAlbums(group).length === 0) {
+                        <p class="missing-status">You own every official album on vinyl.</p>
+                      } @else {
+                        @for (album of missingAlbums(group); track album.masterId) {
+                          <div class="missing-album">
+                            <button
+                              type="button"
+                              class="missing-album-row"
+                              [attr.aria-expanded]="isAlbumExpanded(album.masterId)"
+                              (click)="toggleAlbum(album.masterId)"
+                            >
+                              <span class="missing-album-title">{{ album.title }}</span>
+                              <span class="missing-album-year">{{ album.year || '' }}</span>
+                              <span class="missing-album-arrow" aria-hidden="true">{{
+                                isAlbumExpanded(album.masterId) ? '&#x25B2;' : '&#x25BC;'
+                              }}</span>
+                            </button>
+                            @if (isAlbumExpanded(album.masterId)) {
+                              @let pressings = pressingsState(album.masterId);
+                              <div class="pressing-list">
+                                @if (pressings?.status === 'loading') {
+                                  <p class="missing-status">Loading vinyl pressings…</p>
+                                } @else if (pressings?.status === 'error') {
+                                  <p class="missing-status">
+                                    Couldn't reach Discogs.
+                                    <button
+                                      type="button"
+                                      class="inline-action"
+                                      (click)="retryPressings(album.masterId)"
+                                    >
+                                      Try again
+                                    </button>
+                                  </p>
+                                } @else if (pressings?.status === 'ready') {
+                                  @for (
+                                    pressing of readyPressings(album.masterId);
+                                    track pressing.releaseId
+                                  ) {
+                                    <div class="pressing-row">
+                                      <span class="pressing-summary">{{
+                                        pressingSummary(pressing)
+                                      }}</span>
+                                      <span class="pressing-label">{{
+                                        pressingLabel(pressing)
+                                      }}</span>
+                                      <a
+                                        class="pressing-link"
+                                        [href]="
+                                          'https://www.discogs.com/release/' + pressing.releaseId
+                                        "
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        >View pressing</a
+                                      >
+                                    </div>
+                                  } @empty {
+                                    <p class="missing-status">No official vinyl pressings found.</p>
+                                  }
+                                  <a
+                                    class="pressing-link all-versions"
+                                    [href]="'https://www.discogs.com/master/' + album.masterId"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    >All versions on Discogs</a
+                                  >
+                                }
+                              </div>
+                            }
+                          </div>
+                        }
+                      }
+                    </div>
+                  }
                   @for (release of group.releases; track release.id) {
                     <article
                       class="release-row"
