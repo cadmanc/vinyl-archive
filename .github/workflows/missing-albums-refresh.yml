@@ -1,0 +1,16 @@
+name: Missing albums refresh
+
+# Restarts the server-side refresh if a run stopped early; it is skipped while one is running.
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: curl -sS --max-time 90 "https://records.psamera.com/api/missing-albums?refresh=1"
