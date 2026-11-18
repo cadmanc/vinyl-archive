@@ -72,7 +72,7 @@ describe('collection refresh', () => {
     ]);
   });
 
-  it('checks new and unfinished artists first, then the oldest stale results', () => {
+  it('checks new artists first, then unfinished ones, then the oldest stale results', () => {
     const now = Date.parse('2026-12-31T00:00:00Z');
     const artists = new Map([
       ['Fresh', 1],
@@ -96,8 +96,7 @@ describe('collection refresh', () => {
       now,
     ).map(([key]) => key);
 
-    expect(order.slice(0, 2).sort()).toEqual(['New', 'Unfinished']);
-    expect(order.slice(2)).toEqual(['Older', 'Old']);
+    expect(order).toEqual(['New', 'Unfinished', 'Older', 'Old']);
   });
 });
 

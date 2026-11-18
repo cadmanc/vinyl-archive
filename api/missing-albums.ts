@@ -191,6 +191,8 @@ export function creditsAllArtists(credit: string | undefined, partners: string[]
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+class DiscogsRateLimitError extends Error {}
+
 async function discogsGet<T>(
   path: string,
   token: string,
@@ -223,7 +225,7 @@ async function discogsGet<T>(
     if (remaining < RATE_LIMIT_FLOOR) await sleep(1100);
     return (await response.json()) as T;
   }
-  throw new Error('Discogs rate limit was not released in time');
+  throw new DiscogsRateLimitError('Discogs rate limit was not released in time');
 }
 
 async function readCache<T extends { cachedAt: string }>(pathname: string): Promise<T | null> {
@@ -327,21 +329,28 @@ async function loadArtistAlbums(
     return document;
   }
 
+  let listingError: unknown;
   while (
     (document.totalPages === undefined || document.pagesFetched < document.totalPages) &&
     Date.now() < deadline
   ) {
-    const data = await discogsGet<DiscogsArtistReleasesPage>(
-      `/artists/${artist.id}/releases`,
-      token,
-      deadline,
-      {
-        sort: 'year',
-        sort_order: 'asc',
-        per_page: '100',
-        page: String(document.pagesFetched + 1),
-      },
-    );
+    let data: DiscogsArtistReleasesPage;
+    try {
+      data = await discogsGet<DiscogsArtistReleasesPage>(
+        `/artists/${artist.id}/releases`,
+        token,
+        deadline,
+        {
+          sort: 'year',
+          sort_order: 'asc',
+          per_page: '100',
+          page: String(document.pagesFetched + 1),
+        },
+      );
+    } catch (error) {
+      listingError = error;
+      break;
+    }
     document.masters.push(
       ...data.releases
         .filter(
@@ -359,19 +368,25 @@ async function loadArtistAlbums(
 
   while (listed && document.checked < document.masters.length && Date.now() < deadline) {
     const master = document.masters[document.checked];
-    const data = await discogsGet<DiscogsMasterVersionsPage>(
-      `/masters/${master.masterId}/versions`,
-      token,
-      deadline,
-      { format: 'Vinyl', per_page: '100' },
-    );
-    if (isVinylAlbum(data.versions)) document.albums.push(master);
+    try {
+      const data = await discogsGet<DiscogsMasterVersionsPage>(
+        `/masters/${master.masterId}/versions`,
+        token,
+        deadline,
+        { format: 'Vinyl', per_page: '100' },
+      );
+      if (isVinylAlbum(data.versions)) document.albums.push(master);
+    } catch (error) {
+      if (error instanceof DiscogsRateLimitError) break;
+      // A master Discogs can't return is skipped rather than blocking the rest of the artist.
+    }
     document.checked++;
   }
 
   document.complete = listed && document.checked >= document.masters.length;
   await writeCache(pathname, document);
   await recordInSummary(document);
+  if (listingError && !(listingError instanceof DiscogsRateLimitError)) throw listingError;
   return document;
 }
 
@@ -443,7 +458,10 @@ export function collectionArtists(releases: CatalogRelease[]): Map<string, numbe
   return artists;
 }
 
-/** Artists never checked or mid-check come first, then the oldest results. */
+/**
+ * Artists never checked come first, then ones mid-check, then the oldest results, so a huge
+ * discography that takes many runs doesn't hold up the rest of the collection.
+ */
 export function refreshOrder(
   artists: Map<string, number>,
   summary: MissingAlbumsSummary,
@@ -455,7 +473,8 @@ export function refreshOrder(
   });
   const rank = (key: string) => {
     const entry = summary.artists[key];
-    return entry?.complete ? Date.parse(entry.cachedAt) : -Infinity;
+    if (!entry) return -Infinity;
+    return entry.complete ? Date.parse(entry.cachedAt) : Number.MIN_SAFE_INTEGER;
   };
   return due.sort(([left], [right]) => rank(left) - rank(right));
 }
