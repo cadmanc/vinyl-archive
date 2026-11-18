@@ -5,8 +5,8 @@ const DISCOGS_API_URL = 'https://api.discogs.com';
 const DISCOGS_USER_AGENT = 'VinylArchive/1.0';
 const CACHE_PREFIX = 'vinyl-archive/missing-albums';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-// Vercel stops the function at 300s; leave room to save progress and respond.
-const TIME_BUDGET_MS = 240_000;
+// Stay well inside the shortest Vercel function limit; progress is saved and resumed.
+const TIME_BUDGET_MS = 45_000;
 const RATE_LIMIT_FLOOR = 5;
 const EXCLUDED_DESCRIPTIONS = ['Unofficial Release', 'Test Pressing', 'Promo'];
 const ALBUM_DESCRIPTIONS = ['Album', 'Compilation'];
@@ -57,6 +57,8 @@ export interface ArtistAlbumsDocument {
   cachedAt: string;
   artist: { id: number; name: string };
   masters: ArtistMaster[];
+  pagesFetched: number;
+  totalPages?: number;
   checked: number;
   albums: ArtistMaster[];
   complete: boolean;
@@ -209,29 +211,38 @@ async function loadArtistAlbums(
     cachedAt: new Date().toISOString(),
     artist: { id: artist.id, name: artist.name },
     masters: [],
+    pagesFetched: 0,
     checked: 0,
     albums: [],
     complete: false,
   };
   if (document.complete) return document;
 
-  if (document.masters.length === 0) {
-    for (let page = 1; ; page++) {
-      const data = await discogsGet<DiscogsArtistReleasesPage>(
-        `/artists/${artist.id}/releases`,
-        token,
-        { sort: 'year', sort_order: 'asc', per_page: '100', page: String(page) },
-      );
-      document.masters.push(
-        ...data.releases
-          .filter((item) => item.type === 'master' && item.role === 'Main')
-          .map((item) => ({ masterId: item.id, title: item.title, year: item.year || undefined })),
-      );
-      if (page >= data.pagination.pages) break;
-    }
+  while (
+    (document.totalPages === undefined || document.pagesFetched < document.totalPages) &&
+    Date.now() < deadline
+  ) {
+    const data = await discogsGet<DiscogsArtistReleasesPage>(
+      `/artists/${artist.id}/releases`,
+      token,
+      {
+        sort: 'year',
+        sort_order: 'asc',
+        per_page: '100',
+        page: String(document.pagesFetched + 1),
+      },
+    );
+    document.masters.push(
+      ...data.releases
+        .filter((item) => item.type === 'master' && item.role === 'Main')
+        .map((item) => ({ masterId: item.id, title: item.title, year: item.year || undefined })),
+    );
+    document.pagesFetched++;
+    document.totalPages = data.pagination.pages;
   }
+  const listed = document.totalPages !== undefined && document.pagesFetched >= document.totalPages;
 
-  while (document.checked < document.masters.length && Date.now() < deadline) {
+  while (listed && document.checked < document.masters.length && Date.now() < deadline) {
     const master = document.masters[document.checked];
     const data = await discogsGet<DiscogsMasterVersionsPage>(
       `/masters/${master.masterId}/versions`,
@@ -242,7 +253,7 @@ async function loadArtistAlbums(
     document.checked++;
   }
 
-  document.complete = document.checked >= document.masters.length;
+  document.complete = listed && document.checked >= document.masters.length;
   await writeCache(pathname, document);
   return document;
 }

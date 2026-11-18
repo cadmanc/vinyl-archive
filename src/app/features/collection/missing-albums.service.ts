@@ -44,11 +44,10 @@ export class MissingAlbumsService {
     return this.request<ArtistAlbumsResult>(`/api/missing-albums?releaseId=${releaseId}`);
   }
 
-  async loadPressings(masterId: number): Promise<VinylPressing[]> {
-    const result = await this.request<{ pressings: VinylPressing[] }>(
-      `/api/missing-albums?masterId=${masterId}`,
-    );
-    return result.pressings;
+  async loadPressings(
+    masterId: number,
+  ): Promise<{ pressings: VinylPressing[]; complete: boolean }> {
+    return this.request(`/api/missing-albums?masterId=${masterId}`);
   }
 
   private async request<T>(url: string): Promise<T> {

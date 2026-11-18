@@ -324,11 +324,17 @@ export class CollectionComponent implements OnInit, OnDestroy {
   private async loadPressings(masterId: number): Promise<void> {
     this.albumPressings.update((current) => ({ ...current, [masterId]: { status: 'loading' } }));
     try {
-      const pressings = await this.missingAlbumsService.loadPressings(masterId);
-      this.albumPressings.update((current) => ({
-        ...current,
-        [masterId]: { status: 'ready', value: pressings },
-      }));
+      for (;;) {
+        const result = await this.missingAlbumsService.loadPressings(masterId);
+        if (result.complete) {
+          this.albumPressings.update((current) => ({
+            ...current,
+            [masterId]: { status: 'ready', value: result.pressings },
+          }));
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, MISSING_ALBUMS_POLL_MS));
+      }
     } catch (error) {
       console.error('Failed to load vinyl pressings:', error);
       this.albumPressings.update((current) => ({ ...current, [masterId]: { status: 'error' } }));
