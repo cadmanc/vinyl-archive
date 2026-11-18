@@ -1,5 +1,7 @@
 import {
+  collectionArtists,
   creditsAllArtists,
+  refreshOrder,
   formatDescriptions,
   isAlbumVersion,
   isOfficialVersion,
@@ -50,6 +52,52 @@ describe('missing albums classification', () => {
     expect(parseYear('2019-10-04')).toBe(2019);
     expect(parseYear('0')).toBeUndefined();
     expect(parseYear(undefined)).toBeUndefined();
+  });
+});
+
+describe('collection refresh', () => {
+  const release = (id: number, artists: string[]) =>
+    ({ id, instanceId: id, basicInfo: { title: 'Album', artists, formats: [] } }) as never;
+
+  it('lists each artist credit once and skips Various Artists', () => {
+    const artists = collectionArtists([
+      release(1, ['Nirvana']),
+      release(2, ['Nirvana']),
+      release(3, ['BadBadNotGood', 'Ghostface Killah']),
+      release(4, ['Various']),
+    ]);
+    expect([...artists]).toEqual([
+      ['Nirvana', 1],
+      ['BadBadNotGood|Ghostface Killah', 3],
+    ]);
+  });
+
+  it('checks new and unfinished artists first, then the oldest stale results', () => {
+    const now = Date.parse('2026-12-31T00:00:00Z');
+    const artists = new Map([
+      ['Fresh', 1],
+      ['Old', 2],
+      ['Older', 3],
+      ['New', 4],
+      ['Unfinished', 5],
+    ]);
+    const entry = (cachedAt: string, complete = true) => ({ cachedAt, complete, albums: [] });
+    const order = refreshOrder(
+      artists,
+      {
+        updatedAt: '',
+        artists: {
+          Fresh: entry('2026-12-30T00:00:00Z'),
+          Old: entry('2026-10-01T00:00:00Z'),
+          Older: entry('2026-09-01T00:00:00Z'),
+          Unfinished: entry('2026-12-30T00:00:00Z', false),
+        },
+      },
+      now,
+    ).map(([key]) => key);
+
+    expect(order.slice(0, 2).sort()).toEqual(['New', 'Unfinished']);
+    expect(order.slice(2)).toEqual(['Older', 'Old']);
   });
 });
 

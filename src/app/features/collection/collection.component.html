@@ -104,13 +104,13 @@
                     }
                   </div>
                   @if (isArtistExpanded(group.key)) {
-                    @let albumsState = artistAlbumsState(group.key);
+                    @let albumsState = artistAlbumsState(group);
                     <div class="missing-albums">
                       @if (albumsState?.status === 'loading') {
                         <p class="missing-status">
                           Checking Discogs for missing albums. The first check can take a minute or
                           two.
-                          {{ artistProgress(group.key) }}
+                          {{ artistProgress(group) }}
                         </p>
                       } @else if (albumsState?.status === 'error') {
                         <p class="missing-status">

@@ -7,6 +7,7 @@ import { Release } from '../../shared/models/release.model';
 import { MasterReleaseService } from '../discogs/master-release.service';
 import { FilterService } from '../../shared/services/filter.service';
 import {
+  artistCreditKey,
   MissingAlbum,
   MissingAlbumsService,
   pressingLabel,
@@ -50,11 +51,16 @@ export function formatPacificDateTime(date: Date): string {
 // "Various" credits hundreds of thousands of releases, so it has no meaningful discography.
 const MISSING_ALBUMS_EXCLUDED_ARTISTS = new Set(['various']);
 const MISSING_ALBUMS_POLL_MS = 2000;
+const MISSING_ALBUMS_REFRESHED_KEY = 'missing-albums-refreshed';
 
 type LoadState<T> =
   | { status: 'loading'; checked?: number; total?: number }
   | { status: 'ready'; value: T }
   | { status: 'error' };
+
+function albumsKey(group: CollectionGroup): string {
+  return artistCreditKey(group.releases[0]?.basicInfo.artists ?? []);
+}
 
 function toggled<T>(set: Set<T>, value: T): Set<T> {
   const next = new Set(set);
@@ -170,6 +176,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
     if (this.filterService.filters().notPlayedIn6Months) {
       this.filterService.setNotPlayedIn6Months(false);
     }
+    void this.loadMissingAlbumsSummary();
     try {
       const releases = await this.db.getAllReleases();
       this.releases.set(sortCollection(releases));
@@ -235,25 +242,25 @@ export class CollectionComponent implements OnInit, OnDestroy {
   }
 
   missingAlbums(group: CollectionGroup): MissingAlbum[] {
-    const state = this.artistAlbums()[group.key];
+    const state = this.artistAlbums()[albumsKey(group)];
     if (state?.status !== 'ready') return [];
     const owned = this.ownedMasterIds();
     return state.value.filter((album) => !owned.has(album.masterId));
   }
 
-  artistAlbumsState(key: string): LoadState<MissingAlbum[]> | undefined {
-    return this.artistAlbums()[key];
+  artistAlbumsState(group: CollectionGroup): LoadState<MissingAlbum[]> | undefined {
+    return this.artistAlbums()[albumsKey(group)];
   }
 
-  artistProgress(key: string): string {
-    const state = this.artistAlbums()[key];
+  artistProgress(group: CollectionGroup): string {
+    const state = this.artistAlbums()[albumsKey(group)];
     return state?.status === 'loading' && state.total
       ? `(${state.checked} of ${state.total} titles checked)`
       : '';
   }
 
   missingSummary(group: CollectionGroup): string {
-    const state = this.artistAlbums()[group.key];
+    const state = this.artistAlbums()[albumsKey(group)];
     if (state?.status === 'ready') return `${this.missingAlbums(group).length} missing`;
     if (state?.status === 'loading') return 'Checking Discogs…';
     return 'Missing albums';
@@ -261,7 +268,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
 
   toggleArtistMissing(group: CollectionGroup): void {
     this.expandedArtists.update((current) => toggled(current, group.key));
-    const state = this.artistAlbums()[group.key];
+    const state = this.artistAlbums()[albumsKey(group)];
     if (this.isArtistExpanded(group.key) && (!state || state.status === 'error')) {
       void this.loadArtistAlbums(group);
     }
@@ -296,19 +303,41 @@ export class CollectionComponent implements OnInit, OnDestroy {
     void this.loadPressings(masterId);
   }
 
+  private async loadMissingAlbumsSummary(): Promise<void> {
+    try {
+      const summary = await this.missingAlbumsService.loadSummary();
+      this.artistAlbums.update((current) => {
+        const next = { ...current };
+        for (const [key, entry] of Object.entries(summary.artists)) {
+          if (entry.albums && next[key]?.status !== 'ready') {
+            next[key] = { status: 'ready', value: entry.albums };
+          }
+        }
+        return next;
+      });
+      if (!sessionStorage.getItem(MISSING_ALBUMS_REFRESHED_KEY)) {
+        sessionStorage.setItem(MISSING_ALBUMS_REFRESHED_KEY, '1');
+        this.missingAlbumsService.requestRefresh();
+      }
+    } catch (error) {
+      console.error('Failed to load missing albums summary:', error);
+    }
+  }
+
   private async loadArtistAlbums(group: CollectionGroup): Promise<void> {
     const releaseId = group.releases[0]?.id;
     if (!releaseId) return;
-    this.setArtistAlbums(group.key, { status: 'loading' });
+    const key = albumsKey(group);
+    this.setArtistAlbums(key, { status: 'loading' });
     try {
       // A first check of a large discography spans several requests; the server saves progress.
       for (;;) {
         const result = await this.missingAlbumsService.loadArtistAlbums(releaseId);
         if (result.complete) {
-          this.setArtistAlbums(group.key, { status: 'ready', value: result.albums });
+          this.setArtistAlbums(key, { status: 'ready', value: result.albums });
           return;
         }
-        this.setArtistAlbums(group.key, {
+        this.setArtistAlbums(key, {
           status: 'loading',
           checked: result.checked,
           total: result.total,
@@ -317,7 +346,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
       }
     } catch (error) {
       console.error('Failed to load missing albums:', error);
-      this.setArtistAlbums(group.key, { status: 'error' });
+      this.setArtistAlbums(key, { status: 'error' });
     }
   }
 

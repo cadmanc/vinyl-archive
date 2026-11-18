@@ -38,8 +38,26 @@ export function pressingLabel(pressing: VinylPressing): string {
   return [pressing.label, pressing.catno].filter(Boolean).join(' · ');
 }
 
+export interface MissingAlbumsSummary {
+  artists: Record<string, { complete: boolean; albums: MissingAlbum[] | null }>;
+}
+
+/** Matches the server's key for an artist credit in the collection. */
+export function artistCreditKey(artists: string[]): string {
+  return artists.join('|');
+}
+
 @Injectable({ providedIn: 'root' })
 export class MissingAlbumsService {
+  async loadSummary(): Promise<MissingAlbumsSummary> {
+    return this.request<MissingAlbumsSummary>('/api/missing-albums?summary=1');
+  }
+
+  /** Lets the server check new artists and refresh old results; the page doesn't wait on it. */
+  requestRefresh(): void {
+    void fetch('/api/missing-albums?refresh=1').catch(() => undefined);
+  }
+
   async loadArtistAlbums(releaseId: number): Promise<ArtistAlbumsResult> {
     return this.request<ArtistAlbumsResult>(`/api/missing-albums?releaseId=${releaseId}`);
   }

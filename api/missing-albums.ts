@@ -1,10 +1,11 @@
 import { get, put } from '@vercel/blob';
-import { readBlobText } from './catalog.repository.js';
+import { readBlobText, readCatalog, type CatalogRelease } from './catalog.repository.js';
 
 const DISCOGS_API_URL = 'https://api.discogs.com';
 const DISCOGS_USER_AGENT = 'VinylArchive/1.0';
 const CACHE_PREFIX = 'vinyl-archive/missing-albums';
-const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const SUMMARY_PATHNAME = `${CACHE_PREFIX}/summary.json`;
+const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 // Stay well inside the shortest Vercel function limit; progress is saved and resumed.
 const TIME_BUDGET_MS = 45_000;
 const RATE_LIMIT_FLOOR = 5;
@@ -70,6 +71,21 @@ export interface ArtistAlbumsDocument {
   checked: number;
   albums: ArtistMaster[];
   complete: boolean;
+  /** Collection artist credits (see catalogKey) that share this discography. */
+  catalogKeys: string[];
+  /** Results from the previous check, still shown while a refresh is in progress. */
+  previousAlbums?: ArtistMaster[];
+}
+
+export interface SummaryEntry {
+  cachedAt: string;
+  complete: boolean;
+  albums: ArtistMaster[] | null;
+}
+
+export interface MissingAlbumsSummary {
+  updatedAt: string;
+  artists: Record<string, SummaryEntry>;
 }
 
 export interface VinylPressing {
@@ -201,12 +217,43 @@ async function readCache<T extends { cachedAt: string }>(pathname: string): Prom
   try {
     const blob = await get(pathname, { access: 'private', useCache: false });
     if (!blob) return null;
-    const document = JSON.parse(await readBlobText(blob.stream)) as T;
-    if (Date.now() - Date.parse(document.cachedAt) > CACHE_TTL_MS) return null;
-    return document;
+    return JSON.parse(await readBlobText(blob.stream)) as T;
   } catch {
     return null;
   }
+}
+
+function isFresh(document: { cachedAt: string }): boolean {
+  return Date.now() - Date.parse(document.cachedAt) <= CACHE_TTL_MS;
+}
+
+export function catalogKey(artists: string[]): string {
+  return artists.join('|');
+}
+
+export function summaryEntry(document: ArtistAlbumsDocument): SummaryEntry {
+  return {
+    cachedAt: document.cachedAt,
+    complete: document.complete,
+    albums: document.complete ? document.albums : (document.previousAlbums ?? null),
+  };
+}
+
+async function readSummary(): Promise<MissingAlbumsSummary> {
+  return (
+    (await readCache<MissingAlbumsSummary>(SUMMARY_PATHNAME)) ?? {
+      updatedAt: new Date(0).toISOString(),
+      artists: {},
+    }
+  );
+}
+
+async function recordInSummary(document: ArtistAlbumsDocument): Promise<void> {
+  if (document.catalogKeys.length === 0) return;
+  const summary = await readSummary();
+  for (const key of document.catalogKeys) summary.artists[key] = summaryEntry(document);
+  summary.updatedAt = new Date().toISOString();
+  await writeCache(SUMMARY_PATHNAME, summary);
 }
 
 async function writeCache(pathname: string, document: unknown): Promise<void> {
@@ -222,6 +269,7 @@ async function loadArtistAlbums(
   releaseId: number,
   token: string,
   deadline: number,
+  key?: string,
 ): Promise<ArtistAlbumsDocument> {
   const release = await discogsGet<DiscogsReleaseDetail>(`/releases/${releaseId}`, token);
   const artists = release.artists ?? [];
@@ -237,12 +285,34 @@ async function loadArtistAlbums(
     checked: 0,
     albums: [],
     complete: false,
+    catalogKeys: [],
   };
   if (artist.id === VARIOUS_ARTISTS_ID) return { ...emptyDocument, complete: true };
 
   const pathname = `${CACHE_PREFIX}/artist-${artists.map((credit) => credit.id).join('-')}.json`;
-  const document = (await readCache<ArtistAlbumsDocument>(pathname)) ?? emptyDocument;
-  if (document.complete) return document;
+  const cached = await readCache<ArtistAlbumsDocument>(pathname);
+  let document: ArtistAlbumsDocument;
+  if (cached && (!cached.complete || isFresh(cached))) {
+    document = { ...cached, catalogKeys: cached.catalogKeys ?? [] };
+  } else if (cached) {
+    document = {
+      ...emptyDocument,
+      catalogKeys: cached.catalogKeys ?? [],
+      previousAlbums: cached.albums,
+    };
+  } else {
+    document = emptyDocument;
+  }
+
+  const isNewKey = key !== undefined && !document.catalogKeys.includes(key);
+  if (isNewKey) document.catalogKeys.push(key);
+  if (document.complete) {
+    if (isNewKey) {
+      await writeCache(pathname, document);
+      await recordInSummary(document);
+    }
+    return document;
+  }
 
   while (
     (document.totalPages === undefined || document.pagesFetched < document.totalPages) &&
@@ -286,6 +356,7 @@ async function loadArtistAlbums(
 
   document.complete = listed && document.checked >= document.masters.length;
   await writeCache(pathname, document);
+  await recordInSummary(document);
   return document;
 }
 
@@ -296,7 +367,7 @@ async function loadPressings(
 ): Promise<PressingsDocument> {
   const pathname = `${CACHE_PREFIX}/master-${masterId}.json`;
   const cached = await readCache<PressingsDocument>(pathname);
-  if (cached?.complete) return cached;
+  if (cached?.complete && isFresh(cached)) return cached;
 
   const versions: DiscogsMasterVersion[] = [];
   for (let page = 1; ; page++) {
@@ -340,9 +411,63 @@ async function loadPressings(
   return document;
 }
 
+/** One entry per artist credit in the collection, with a release to resolve it from. */
+export function collectionArtists(releases: CatalogRelease[]): Map<string, number> {
+  const artists = new Map<string, number>();
+  for (const release of releases) {
+    const credits = release.basicInfo.artists;
+    if (credits.length === 0 || credits[0].startsWith('Various')) continue;
+    const key = catalogKey(credits);
+    if (!artists.has(key)) artists.set(key, release.id);
+  }
+  return artists;
+}
+
+/** Artists never checked or mid-check come first, then the oldest results. */
+export function refreshOrder(
+  artists: Map<string, number>,
+  summary: MissingAlbumsSummary,
+  now = Date.now(),
+): Array<[string, number]> {
+  const due = [...artists].filter(([key]) => {
+    const entry = summary.artists[key];
+    return !entry || !entry.complete || now - Date.parse(entry.cachedAt) > CACHE_TTL_MS;
+  });
+  const rank = (key: string) => {
+    const entry = summary.artists[key];
+    return entry?.complete ? Date.parse(entry.cachedAt) : -Infinity;
+  };
+  return due.sort(([left], [right]) => rank(left) - rank(right));
+}
+
+async function refreshCollection(
+  token: string,
+  deadline: number,
+): Promise<{ processed: number; remaining: number }> {
+  const [catalog, summary] = await Promise.all([readCatalog(), readSummary()]);
+  const due = refreshOrder(collectionArtists(catalog.releases), summary);
+  let processed = 0;
+  for (const [key, releaseId] of due) {
+    if (Date.now() >= deadline) break;
+    try {
+      await loadArtistAlbums(releaseId, token, deadline, key);
+    } catch {
+      // Skip artists Discogs can't resolve; they are retried on the next refresh.
+    }
+    processed++;
+  }
+  return { processed, remaining: due.length - processed };
+}
+
 function positiveInteger(value: string | string[] | undefined): number | null {
   const parsed = Number(Array.isArray(value) ? value[0] : value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function catalogKeyFor(releaseId: number): Promise<string | undefined> {
+  const catalog = await readCatalog();
+  const release = catalog.releases.find((candidate) => candidate.id === releaseId);
+  return release ? catalogKey(release.basicInfo.artists) : undefined;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
@@ -351,9 +476,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return;
   }
 
+  if (req.query.summary !== undefined) {
+    try {
+      const summary = await readSummary();
+      res.setHeader('Cache-Control', 'no-store').status(200).json(summary);
+    } catch {
+      res.status(500).json({ error: 'Missing albums summary could not be read' });
+    }
+    return;
+  }
+
   const token = process.env.DISCOGS_TOKEN?.trim();
   if (!token) {
     res.status(503).json({ error: 'Discogs server configuration is unavailable' });
+    return;
+  }
+
+  const deadline = Date.now() + TIME_BUDGET_MS;
+  if (req.query.refresh !== undefined) {
+    try {
+      res.status(200).json(await refreshCollection(token, deadline));
+    } catch {
+      res.status(502).json({ error: 'Missing albums refresh failed' });
+    }
     return;
   }
 
@@ -364,13 +509,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return;
   }
 
-  const deadline = Date.now() + TIME_BUDGET_MS;
   try {
     if (masterId) {
       const { pressings, complete } = await loadPressings(masterId, token, deadline);
       res.status(200).json({ pressings, complete });
     } else {
-      const document = await loadArtistAlbums(releaseId!, token, deadline);
+      const key = await catalogKeyFor(releaseId!);
+      const document = await loadArtistAlbums(releaseId!, token, deadline, key);
       res.status(200).json({
         artist: document.artist,
         albums: document.albums,
