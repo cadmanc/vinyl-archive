@@ -1,4 +1,5 @@
 import { get, put } from '@vercel/blob';
+import { waitUntil } from '@vercel/functions';
 import { readBlobText, readCatalog, type CatalogRelease } from './catalog.repository.js';
 
 const DISCOGS_API_URL = 'https://api.discogs.com';
@@ -18,7 +19,7 @@ const VARIOUS_ARTISTS_ID = 194;
 const REFRESH_LOCK_PATHNAME = `${CACHE_PREFIX}/refresh-lock.json`;
 const REFRESH_LOCK_MS = 120_000;
 const MAX_REFRESH_HOPS = 500;
-const HANDOFF_WAIT_MS = 3_000;
+const HANDOFF_TIMEOUT_MS = 10_000;
 
 type VercelRequest = {
   method?: string;
@@ -527,16 +528,41 @@ async function writeRefreshLock(runId: string, expiresAt: number): Promise<void>
   } satisfies RefreshLock);
 }
 
-/** Starts the next refresh run; it keeps running after this request stops waiting for it. */
-async function handOff(req: VercelRequest, runId: string, hop: number): Promise<void> {
-  const host = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host;
-  if (!host) return;
-  const url = `https://${host}/api/missing-albums?refresh=1&run=${runId}&hop=${hop}`;
+async function runRefresh(
+  req: VercelRequest,
+  token: string,
+  deadline: number,
+  runId: string,
+  hop: number,
+): Promise<void> {
+  let continues = false;
   try {
-    await fetch(url, { signal: AbortSignal.timeout(HANDOFF_WAIT_MS) });
+    const result = await refreshCollection(token, deadline);
+    // Stop when everything is done, or when the only artists left keep failing.
+    const madeProgress = result.succeeded > 0 || result.remaining > 0;
+    continues = result.pending > 0 && madeProgress && hop < MAX_REFRESH_HOPS;
+    if (continues) continues = await handOff(req, runId, hop + 1);
   } catch {
-    // The timeout is expected: the next run is still working.
+    continues = false;
   }
+  // Release the lock so the next scheduled trigger can start a fresh chain.
+  if (!continues) await writeRefreshLock(runId, 0).catch(() => undefined);
+}
+
+/** Starts the next refresh run, which replies as soon as it has taken over. */
+async function handOff(req: VercelRequest, runId: string, hop: number): Promise<boolean> {
+  const host = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host;
+  if (!host) return false;
+  const url = `https://${host}/api/missing-albums?refresh=1&run=${runId}&hop=${hop}`;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(HANDOFF_TIMEOUT_MS) });
+      if (response.status === 202) return true;
+    } catch {
+      // Retried below.
+    }
+  }
+  return false;
 }
 
 function positiveInteger(value: string | string[] | undefined): number | null {
@@ -574,27 +600,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   const deadline = Date.now() + TIME_BUDGET_MS;
   if (req.query.refresh !== undefined) {
+    const requestedRun = Array.isArray(req.query.run) ? req.query.run[0] : req.query.run;
+    let runId: string | null;
     try {
-      const requestedRun = Array.isArray(req.query.run) ? req.query.run[0] : req.query.run;
-      const runId = await claimRefreshLock(requestedRun);
-      if (!runId) {
-        res.status(200).json({ skipped: 'A refresh is already running' });
-        return;
-      }
-      const hop = positiveInteger(req.query.hop) ?? 1;
-      const result = await refreshCollection(token, deadline);
-      // Stop when everything is done, or when the only artists left keep failing.
-      const madeProgress = result.succeeded > 0 || result.remaining > 0;
-      const continues = result.pending > 0 && madeProgress && hop < MAX_REFRESH_HOPS;
-      if (continues) {
-        await handOff(req, runId, hop + 1);
-      } else {
-        await writeRefreshLock(runId, 0);
-      }
-      res.status(200).json({ ...result, continues, hop });
+      runId = await claimRefreshLock(requestedRun);
     } catch {
       res.status(502).json({ error: 'Missing albums refresh failed' });
+      return;
     }
+    if (!runId) {
+      res.status(200).json({ skipped: 'A refresh is already running' });
+      return;
+    }
+    const hop = positiveInteger(req.query.hop) ?? 1;
+    // Reply right away so the caller (cron, page, or the previous run) isn't held open.
+    waitUntil(runRefresh(req, token, deadline, runId, hop));
+    res.status(202).json({ started: true, hop });
     return;
   }
 
