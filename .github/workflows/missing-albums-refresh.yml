@@ -2,12 +2,14 @@ name: Missing albums refresh
 
 # Vercel stops a function from re-invoking itself after a few hops, so this keeps the
 # server-side refresh going: it restarts the chain whenever it stops, until nothing is due.
+# GitHub runs schedules late or skips them, so an unfinished job starts its own next run.
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '17 */2 * * *'
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  actions: write
 
 concurrency:
   group: missing-albums-refresh
@@ -16,19 +18,28 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 27
+    timeout-minutes: 345
     steps:
       - name: Keep the refresh running
+        id: refresh
         run: |
           url="https://records.psamera.com/api/missing-albums"
-          end=$((SECONDS + 25 * 60))
+          end=$((SECONDS + 330 * 60))
           while [ $SECONDS -lt $end ]; do
             status=$(curl -sS --max-time 30 "$url?status=1" || true)
             echo "status: $status"
             if echo "$status" | grep -q '"running":false'; then
               result=$(curl -sS --max-time 30 "$url?refresh=1" || true)
               echo "refresh: $result"
-              if echo "$result" | grep -q '"upToDate":true'; then exit 0; fi
+              if echo "$result" | grep -q '"upToDate":true'; then
+                echo "done=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
             fi
             sleep 60
           done
+      - name: Continue in a new run
+        if: steps.refresh.outputs.done != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run missing-albums-refresh.yml --repo "$GITHUB_REPOSITORY"

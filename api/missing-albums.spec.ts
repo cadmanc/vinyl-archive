@@ -8,6 +8,7 @@ import {
   isVinylAlbum,
   parseYear,
   sortPressings,
+  summaryEntry,
   toPressing,
 } from './missing-albums';
 
@@ -98,6 +99,51 @@ describe('collection refresh', () => {
     ).map(([key]) => key);
 
     expect(order).toEqual(['New', 'Unfinished', 'Older', 'Old']);
+  });
+});
+
+describe('summaryEntry', () => {
+  const document = {
+    cachedAt: '2026-11-19T00:00:00Z',
+    artist: { id: 1, name: 'Pink Floyd' },
+    masters: [
+      { masterId: 1, title: 'Animals' },
+      { masterId: 2, title: 'Meddle' },
+    ],
+    checked: 1,
+    albums: [{ masterId: 1, title: 'Animals' }],
+    catalogKeys: ['Pink Floyd'],
+  };
+
+  it('reports progress while a check is underway', () => {
+    expect(summaryEntry({ ...document, pagesFetched: 2, totalPages: 2, complete: false })).toEqual({
+      cachedAt: document.cachedAt,
+      complete: false,
+      albums: null,
+      checked: 1,
+      total: 2,
+    });
+  });
+
+  it('leaves the total out until the discography is fully listed', () => {
+    expect(
+      summaryEntry({ ...document, pagesFetched: 1, totalPages: 3, complete: false }).total,
+    ).toBeUndefined();
+  });
+
+  it('keeps the earlier albums while a stale result is rechecked', () => {
+    const previousAlbums = [{ masterId: 2, title: 'Meddle' }];
+    expect(
+      summaryEntry({ ...document, pagesFetched: 0, complete: false, previousAlbums }).albums,
+    ).toEqual(previousAlbums);
+  });
+
+  it('reports the albums once complete', () => {
+    expect(summaryEntry({ ...document, pagesFetched: 2, totalPages: 2, complete: true })).toEqual({
+      cachedAt: document.cachedAt,
+      complete: true,
+      albums: document.albums,
+    });
   });
 });
 

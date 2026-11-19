@@ -91,6 +91,9 @@ export interface SummaryEntry {
   cachedAt: string;
   complete: boolean;
   albums: ArtistMaster[] | null;
+  /** Progress while a check is underway; total is known once the discography is listed. */
+  checked?: number;
+  total?: number;
 }
 
 export interface MissingAlbumsSummary {
@@ -250,11 +253,18 @@ export function catalogKey(artists: string[]): string {
 }
 
 export function summaryEntry(document: ArtistAlbumsDocument): SummaryEntry {
-  return {
+  const entry: SummaryEntry = {
     cachedAt: document.cachedAt,
     complete: document.complete,
     albums: document.complete ? document.albums : (document.previousAlbums ?? null),
   };
+  if (!document.complete) {
+    entry.checked = document.checked;
+    const listed =
+      document.totalPages !== undefined && document.pagesFetched >= document.totalPages;
+    if (listed) entry.total = document.masters.length;
+  }
+  return entry;
 }
 
 async function readSummary(): Promise<MissingAlbumsSummary> {
@@ -269,7 +279,12 @@ async function readSummary(): Promise<MissingAlbumsSummary> {
 async function recordInSummary(document: ArtistAlbumsDocument): Promise<void> {
   if (document.catalogKeys.length === 0) return;
   const summary = await readSummary();
-  for (const key of document.catalogKeys) summary.artists[key] = summaryEntry(document);
+  const entry = summaryEntry(document);
+  const unchanged = document.catalogKeys.every(
+    (key) => JSON.stringify(summary.artists[key]) === JSON.stringify(entry),
+  );
+  if (unchanged) return;
+  for (const key of document.catalogKeys) summary.artists[key] = entry;
   summary.updatedAt = new Date().toISOString();
   await writeCache(SUMMARY_PATHNAME, summary);
 }
@@ -325,10 +340,9 @@ async function loadArtistAlbums(
   const isNewKey = key !== undefined && !document.catalogKeys.includes(key);
   if (isNewKey) document.catalogKeys.push(key);
   if (document.complete) {
-    if (isNewKey) {
-      await writeCache(pathname, document);
-      await recordInSummary(document);
-    }
+    if (isNewKey) await writeCache(pathname, document);
+    // Also repairs summary entries lost when two runs saved the summary at the same time.
+    await recordInSummary(document);
     return document;
   }
 

@@ -39,7 +39,10 @@ export function pressingLabel(pressing: VinylPressing): string {
 }
 
 export interface MissingAlbumsSummary {
-  artists: Record<string, { complete: boolean; albums: MissingAlbum[] | null }>;
+  artists: Record<
+    string,
+    { complete: boolean; albums: MissingAlbum[] | null; checked?: number; total?: number }
+  >;
 }
 
 /** Matches the server's key for an artist credit in the collection. */

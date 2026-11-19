@@ -132,6 +132,8 @@ export class CollectionComponent implements OnInit, OnDestroy {
       ),
   );
   artistAlbums = signal<Record<string, LoadState<MissingAlbum[]>>>({});
+  /** Server-side check progress for artists whose albums aren't saved yet. */
+  serverProgress = signal<Record<string, { checked: number; total?: number }>>({});
   expandedArtists = signal<Set<string>>(new Set());
   albumPressings = signal<Record<number, LoadState<VinylPressing[]>>>({});
   expandedAlbums = signal<Set<number>>(new Set());
@@ -263,6 +265,9 @@ export class CollectionComponent implements OnInit, OnDestroy {
     const state = this.artistAlbums()[albumsKey(group)];
     if (state?.status === 'ready') return `${this.missingAlbums(group).length} missing`;
     if (state?.status === 'loading') return 'Checking Discogs…';
+    const progress = this.serverProgress()[albumsKey(group)];
+    if (progress?.total) return `Checking ${progress.checked} of ${progress.total}`;
+    if (progress) return 'Checking Discogs…';
     return 'Missing albums';
   }
 
@@ -315,6 +320,11 @@ export class CollectionComponent implements OnInit, OnDestroy {
         }
         return next;
       });
+      const progress: Record<string, { checked: number; total?: number }> = {};
+      for (const [key, entry] of Object.entries(summary.artists)) {
+        if (!entry.albums) progress[key] = { checked: entry.checked ?? 0, total: entry.total };
+      }
+      this.serverProgress.set(progress);
       if (!sessionStorage.getItem(MISSING_ALBUMS_REFRESHED_KEY)) {
         sessionStorage.setItem(MISSING_ALBUMS_REFRESHED_KEY, '1');
         this.missingAlbumsService.requestRefresh();
