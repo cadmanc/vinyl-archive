@@ -1,6 +1,7 @@
 name: Missing albums refresh
 
-# Restarts the server-side refresh if a run stopped early; it is skipped while one is running.
+# Vercel stops a function from re-invoking itself after a few hops, so this keeps the
+# server-side refresh going: it restarts the chain whenever it stops, until nothing is due.
 on:
   schedule:
     - cron: '*/30 * * * *'
@@ -8,9 +9,26 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: missing-albums-refresh
+  cancel-in-progress: false
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 27
     steps:
-      - run: curl -sS --max-time 90 "https://records.psamera.com/api/missing-albums?refresh=1"
+      - name: Keep the refresh running
+        run: |
+          url="https://records.psamera.com/api/missing-albums"
+          end=$((SECONDS + 25 * 60))
+          while [ $SECONDS -lt $end ]; do
+            status=$(curl -sS --max-time 30 "$url?status=1" || true)
+            echo "status: $status"
+            if echo "$status" | grep -q '"running":false'; then
+              result=$(curl -sS --max-time 30 "$url?refresh=1" || true)
+              echo "refresh: $result"
+              if echo "$result" | grep -q '"upToDate":true'; then exit 0; fi
+            fi
+            sleep 60
+          done

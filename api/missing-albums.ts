@@ -9,6 +9,8 @@ const SUMMARY_PATHNAME = `${CACHE_PREFIX}/summary.json`;
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 // Stay well inside the shortest Vercel function limit; progress is saved and resumed.
 const TIME_BUDGET_MS = 40_000;
+// Background refresh runs get most of the function's 300s limit (see vercel.json).
+const REFRESH_TIME_BUDGET_MS = 240_000;
 // Extra time an in-flight Discogs request may use past the budget before giving up.
 const REQUEST_GRACE_MS = 8_000;
 const RATE_LIMIT_FLOOR = 5;
@@ -17,7 +19,7 @@ const ALBUM_DESCRIPTIONS = ['Album', 'Compilation'];
 const NON_ALBUM_DESCRIPTIONS = ['Single', 'Maxi-Single', 'EP', 'Mini-Album'];
 const VARIOUS_ARTISTS_ID = 194;
 const REFRESH_LOCK_PATHNAME = `${CACHE_PREFIX}/refresh-lock.json`;
-const REFRESH_LOCK_MS = 120_000;
+const REFRESH_LOCK_MS = 330_000;
 const MAX_REFRESH_HOPS = 500;
 const HANDOFF_TIMEOUT_MS = 10_000;
 
@@ -480,12 +482,16 @@ export function refreshOrder(
   return due.sort(([left], [right]) => rank(left) - rank(right));
 }
 
+async function dueArtists(): Promise<Array<[string, number]>> {
+  const [catalog, summary] = await Promise.all([readCatalog(), readSummary()]);
+  return refreshOrder(collectionArtists(catalog.releases), summary);
+}
+
 async function refreshCollection(
   token: string,
   deadline: number,
 ): Promise<{ processed: number; succeeded: number; remaining: number; pending: number }> {
-  const [catalog, summary] = await Promise.all([readCatalog(), readSummary()]);
-  const due = refreshOrder(collectionArtists(catalog.releases), summary);
+  const due = await dueArtists();
   let processed = 0;
   let succeeded = 0;
   let unfinished = 0;
@@ -628,6 +634,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     const requestedRun = Array.isArray(req.query.run) ? req.query.run[0] : req.query.run;
     let runId: string | null;
     try {
+      if ((await dueArtists()).length === 0) {
+        res.status(200).json({ upToDate: true });
+        return;
+      }
       runId = await claimRefreshLock(requestedRun);
     } catch {
       res.status(502).json({ error: 'Missing albums refresh failed' });
@@ -639,7 +649,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
     const hop = positiveInteger(req.query.hop) ?? 1;
     // Reply right away so the caller (cron, page, or the previous run) isn't held open.
-    waitUntil(runRefresh(req, token, deadline, runId, hop));
+    waitUntil(runRefresh(req, token, Date.now() + REFRESH_TIME_BUDGET_MS, runId, hop));
     res.status(202).json({ started: true, hop });
     return;
   }
