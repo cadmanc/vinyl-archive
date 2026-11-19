@@ -509,6 +509,8 @@ interface RefreshLock {
   cachedAt: string;
   runId: string;
   expiresAt: number;
+  /** How the last run in the chain ended, for checking on the chain from outside. */
+  lastRun?: string;
 }
 
 /** Only one refresh chain runs at a time, so runs don't overwrite each other's summary writes. */
@@ -520,11 +522,12 @@ async function claimRefreshLock(runId: string | undefined): Promise<string | nul
   return claimed;
 }
 
-async function writeRefreshLock(runId: string, expiresAt: number): Promise<void> {
+async function writeRefreshLock(runId: string, expiresAt: number, lastRun?: string): Promise<void> {
   await writeCache(REFRESH_LOCK_PATHNAME, {
     cachedAt: new Date().toISOString(),
     runId,
     expiresAt,
+    lastRun,
   } satisfies RefreshLock);
 }
 
@@ -536,33 +539,43 @@ async function runRefresh(
   hop: number,
 ): Promise<void> {
   let continues = false;
+  let lastRun: string;
   try {
     const result = await refreshCollection(token, deadline);
     // Stop when everything is done, or when the only artists left keep failing.
     const madeProgress = result.succeeded > 0 || result.remaining > 0;
     continues = result.pending > 0 && madeProgress && hop < MAX_REFRESH_HOPS;
-    if (continues) continues = await handOff(req, runId, hop + 1);
-  } catch {
+    lastRun = `hop ${hop}: ${JSON.stringify(result)}`;
+    if (continues) {
+      const handOffStatus = await handOff(req, runId, hop + 1);
+      continues = handOffStatus === 202;
+      lastRun += ` handoff ${handOffStatus}`;
+    }
+  } catch (error) {
     continues = false;
+    lastRun = `hop ${hop} failed: ${error instanceof Error ? error.message : String(error)}`;
   }
   // Release the lock so the next scheduled trigger can start a fresh chain.
-  if (!continues) await writeRefreshLock(runId, 0).catch(() => undefined);
+  if (!continues) await writeRefreshLock(runId, 0, lastRun).catch(() => undefined);
 }
 
 /** Starts the next refresh run, which replies as soon as it has taken over. */
-async function handOff(req: VercelRequest, runId: string, hop: number): Promise<boolean> {
+async function handOff(req: VercelRequest, runId: string, hop: number): Promise<number | string> {
   const host = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host;
-  if (!host) return false;
+  if (!host) return 'no host';
   const url = `https://${host}/api/missing-albums?refresh=1&run=${runId}&hop=${hop}`;
+  let outcome: number | string = 'not attempted';
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(HANDOFF_TIMEOUT_MS) });
-      if (response.status === 202) return true;
-    } catch {
-      // Retried below.
+      outcome = response.status;
+      if (response.status === 202) return 202;
+      outcome = `${response.status} ${await response.text()}`;
+    } catch (error) {
+      outcome = error instanceof Error ? error.message : String(error);
     }
   }
-  return false;
+  return outcome;
 }
 
 function positiveInteger(value: string | string[] | undefined): number | null {
@@ -579,6 +592,18 @@ async function catalogKeyFor(releaseId: number): Promise<string | undefined> {
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET').status(405).json({ error: 'Method not allowed' });
+    return;
+  }
+
+  if (req.query.status !== undefined) {
+    const lock = await readCache<RefreshLock>(REFRESH_LOCK_PATHNAME);
+    res
+      .setHeader('Cache-Control', 'no-store')
+      .status(200)
+      .json({
+        running: !!lock && lock.expiresAt > Date.now(),
+        lastRun: lock?.lastRun ?? null,
+      });
     return;
   }
 
