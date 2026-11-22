@@ -51,7 +51,6 @@ export function formatPacificDateTime(date: Date): string {
 // "Various" credits hundreds of thousands of releases, so it has no meaningful discography.
 const MISSING_ALBUMS_EXCLUDED_ARTISTS = new Set(['various']);
 const MISSING_ALBUMS_POLL_MS = 2000;
-const MISSING_ALBUMS_REFRESHED_KEY = 'missing-albums-refreshed';
 
 type LoadState<T> =
   | { status: 'loading'; checked?: number; total?: number }
@@ -325,10 +324,6 @@ export class CollectionComponent implements OnInit, OnDestroy {
         if (!entry.albums) progress[key] = { checked: entry.checked ?? 0, total: entry.total };
       }
       this.serverProgress.set(progress);
-      if (!sessionStorage.getItem(MISSING_ALBUMS_REFRESHED_KEY)) {
-        sessionStorage.setItem(MISSING_ALBUMS_REFRESHED_KEY, '1');
-        this.missingAlbumsService.requestRefresh();
-      }
     } catch (error) {
       console.error('Failed to load missing albums summary:', error);
     }

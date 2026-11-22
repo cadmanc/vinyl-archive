@@ -1,4 +1,4 @@
-import { get, put } from '@vercel/blob';
+import { BlobNotFoundError, get, put } from '@vercel/blob';
 import { waitUntil } from '@vercel/functions';
 import { readBlobText, readCatalog, type CatalogRelease } from './catalog.repository.js';
 
@@ -239,8 +239,11 @@ async function readCache<T extends { cachedAt: string }>(pathname: string): Prom
     const blob = await get(pathname, { access: 'private', useCache: false });
     if (!blob) return null;
     return JSON.parse(await readBlobText(blob.stream)) as T;
-  } catch {
-    return null;
+  } catch (error) {
+    // Only a missing file means "nothing saved yet"; any other failure must not be
+    // mistaken for empty data, or the next save would overwrite what is stored.
+    if (error instanceof BlobNotFoundError) return null;
+    throw error;
   }
 }
 
@@ -616,14 +619,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   }
 
   if (req.query.status !== undefined) {
-    const lock = await readCache<RefreshLock>(REFRESH_LOCK_PATHNAME);
-    res
-      .setHeader('Cache-Control', 'no-store')
-      .status(200)
-      .json({
-        running: !!lock && lock.expiresAt > Date.now(),
-        lastRun: lock?.lastRun ?? null,
-      });
+    try {
+      const lock = await readCache<RefreshLock>(REFRESH_LOCK_PATHNAME);
+      res
+        .setHeader('Cache-Control', 'no-store')
+        .status(200)
+        .json({
+          running: !!lock && lock.expiresAt > Date.now(),
+          lastRun: lock?.lastRun ?? null,
+        });
+    } catch {
+      res.status(500).json({ error: 'Missing albums status could not be read' });
+    }
     return;
   }
 

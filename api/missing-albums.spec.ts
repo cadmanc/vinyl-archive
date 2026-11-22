@@ -12,7 +12,11 @@ import {
   toPressing,
 } from './missing-albums';
 
-jest.mock('@vercel/blob', () => ({ get: jest.fn(), put: jest.fn() }));
+jest.mock('@vercel/blob', () => ({
+  BlobNotFoundError: class extends Error {},
+  get: jest.fn(),
+  put: jest.fn(),
+}));
 jest.mock('@vercel/functions', () => ({ waitUntil: jest.fn() }));
 
 const version = (format: string, id = 1) => ({ id, format });

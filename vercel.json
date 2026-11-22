@@ -3,11 +3,5 @@
     "api/missing-albums.ts": {
       "maxDuration": 300
     }
-  },
-  "crons": [
-    {
-      "path": "/api/missing-albums?refresh=1",
-      "schedule": "0 10 * * *"
-    }
-  ]
+  }
 }
