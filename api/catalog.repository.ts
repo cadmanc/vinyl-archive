@@ -94,6 +94,12 @@ export async function updateCatalogRelease(
   const catalog = await readCatalog();
   const release = catalog.releases.find((candidate) => candidate.id === releaseId);
   if (!release) return null;
+  const unchanged = Object.entries(enrichment).every(
+    ([key, value]) =>
+      JSON.stringify(release.basicInfo[key as keyof typeof release.basicInfo]) ===
+      JSON.stringify(value),
+  );
+  if (unchanged) return catalog;
 
   return writeCatalog(
     catalog.releases.map((candidate) =>

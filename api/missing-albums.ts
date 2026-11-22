@@ -1,31 +1,18 @@
-import { BlobNotFoundError, get, put } from '@vercel/blob';
-import { waitUntil } from '@vercel/functions';
-import { readBlobText, readCatalog, type CatalogRelease } from './catalog.repository.js';
-
 const DISCOGS_API_URL = 'https://api.discogs.com';
 const DISCOGS_USER_AGENT = 'VinylArchive/1.0';
-const CACHE_PREFIX = 'vinyl-archive/missing-albums';
-const SUMMARY_PATHNAME = `${CACHE_PREFIX}/summary.json`;
-const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-// Stay well inside the shortest Vercel function limit; progress is saved and resumed.
+// Each request stays well inside the function limit; the page asks again for the rest.
 const TIME_BUDGET_MS = 40_000;
-// Background refresh runs get most of the function's 300s limit (see vercel.json).
-const REFRESH_TIME_BUDGET_MS = 240_000;
 // Extra time an in-flight Discogs request may use past the budget before giving up.
 const REQUEST_GRACE_MS = 8_000;
 const RATE_LIMIT_FLOOR = 5;
 const EXCLUDED_DESCRIPTIONS = ['Unofficial Release', 'Test Pressing', 'Promo'];
 const ALBUM_DESCRIPTIONS = ['Album', 'Compilation'];
 const NON_ALBUM_DESCRIPTIONS = ['Single', 'Maxi-Single', 'EP', 'Mini-Album'];
-const VARIOUS_ARTISTS_ID = 194;
-const REFRESH_LOCK_PATHNAME = `${CACHE_PREFIX}/refresh-lock.json`;
-const REFRESH_LOCK_MS = 330_000;
-const MAX_REFRESH_HOPS = 500;
-const HANDOFF_TIMEOUT_MS = 10_000;
+// Pressing lists rarely change; the CDN serves repeat requests without calling Discogs.
+const PRESSINGS_CACHE_CONTROL = 'public, s-maxage=604800, stale-while-revalidate=86400';
 
 type VercelRequest = {
   method?: string;
-  headers: Record<string, string | string[] | undefined>;
   query: Record<string, string | string[] | undefined>;
 };
 
@@ -35,7 +22,7 @@ type VercelResponse = {
   json: (body: unknown) => VercelResponse;
 };
 
-interface DiscogsArtistReleasesPage {
+export interface DiscogsArtistReleasesPage {
   pagination: { pages: number };
   releases: Array<{
     id: number;
@@ -47,7 +34,7 @@ interface DiscogsArtistReleasesPage {
   }>;
 }
 
-interface DiscogsMasterVersion {
+export interface DiscogsMasterVersion {
   id: number;
   format?: string;
   released?: string;
@@ -56,49 +43,13 @@ interface DiscogsMasterVersion {
   catno?: string;
 }
 
-interface DiscogsMasterVersionsPage {
+export interface DiscogsMasterVersionsPage {
   pagination: { pages: number };
   versions: DiscogsMasterVersion[];
 }
 
 interface DiscogsReleaseDetail {
-  artists?: Array<{ id: number; name: string }>;
   formats?: Array<{ name: string; qty?: string; descriptions?: string[]; text?: string }>;
-}
-
-export interface ArtistMaster {
-  masterId: number;
-  title: string;
-  year?: number;
-}
-
-export interface ArtistAlbumsDocument {
-  cachedAt: string;
-  artist: { id: number; name: string };
-  masters: ArtistMaster[];
-  pagesFetched: number;
-  totalPages?: number;
-  checked: number;
-  albums: ArtistMaster[];
-  complete: boolean;
-  /** Collection artist credits (see catalogKey) that share this discography. */
-  catalogKeys: string[];
-  /** Results from the previous check, still shown while a refresh is in progress. */
-  previousAlbums?: ArtistMaster[];
-}
-
-export interface SummaryEntry {
-  cachedAt: string;
-  complete: boolean;
-  albums: ArtistMaster[] | null;
-  /** Progress while a check is underway; total is known once the discography is listed. */
-  checked?: number;
-  total?: number;
-}
-
-export interface MissingAlbumsSummary {
-  updatedAt: string;
-  artists: Record<string, SummaryEntry>;
 }
 
 export interface VinylPressing {
@@ -111,12 +62,6 @@ export interface VinylPressing {
   descriptions: string[];
   details?: string;
   detailed: boolean;
-}
-
-interface PressingsDocument {
-  cachedAt: string;
-  pressings: VinylPressing[];
-  complete: boolean;
 }
 
 export function formatDescriptions(format: string | undefined): string[] {
@@ -195,23 +140,23 @@ export function creditsAllArtists(credit: string | undefined, partners: string[]
   return partners.every((partner) => normalizedCredit.includes(normalizeArtistName(partner)));
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-class DiscogsRateLimitError extends Error {}
+export class DiscogsRateLimitError extends Error {}
 
-async function discogsGet<T>(
+export async function discogsGet<T>(
   path: string,
   token: string,
-  deadline: number,
   params: Record<string, string> = {},
+  hardStop = Infinity,
 ): Promise<T> {
   const url = new URL(path, DISCOGS_API_URL);
-  const hardStop = deadline + REQUEST_GRACE_MS;
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
 
   for (let attempt = 0; attempt < 6; attempt++) {
+    const timeout = Number.isFinite(hardStop) ? Math.max(1_000, hardStop - Date.now()) : 30_000;
     const response = await fetch(url, {
-      signal: AbortSignal.timeout(Math.max(1_000, hardStop - Date.now())),
+      signal: AbortSignal.timeout(timeout),
       headers: {
         Accept: 'application/json',
         'User-Agent': DISCOGS_USER_AGENT,
@@ -220,8 +165,9 @@ async function discogsGet<T>(
     });
     if (response.status === 429) {
       const wait = (Number(response.headers.get('retry-after')) || 10) * 1000;
-      if (Date.now() + wait > hardStop)
-        throw new Error('Discogs rate limit outlasted the time budget');
+      if (Date.now() + wait > hardStop) {
+        throw new DiscogsRateLimitError('Discogs rate limit outlasted the time budget');
+      }
       await sleep(wait);
       continue;
     }
@@ -234,197 +180,23 @@ async function discogsGet<T>(
   throw new DiscogsRateLimitError('Discogs rate limit was not released in time');
 }
 
-async function readCache<T extends { cachedAt: string }>(pathname: string): Promise<T | null> {
-  try {
-    const blob = await get(pathname, { access: 'private', useCache: false });
-    if (!blob) return null;
-    return JSON.parse(await readBlobText(blob.stream)) as T;
-  } catch (error) {
-    // Only a missing file means "nothing saved yet"; any other failure must not be
-    // mistaken for empty data, or the next save would overwrite what is stored.
-    if (error instanceof BlobNotFoundError) return null;
-    throw error;
-  }
-}
-
-function isFresh(document: { cachedAt: string }): boolean {
-  return Date.now() - Date.parse(document.cachedAt) <= CACHE_TTL_MS;
-}
-
-export function catalogKey(artists: string[]): string {
-  return artists.join('|');
-}
-
-export function summaryEntry(document: ArtistAlbumsDocument): SummaryEntry {
-  const entry: SummaryEntry = {
-    cachedAt: document.cachedAt,
-    complete: document.complete,
-    albums: document.complete ? document.albums : (document.previousAlbums ?? null),
-  };
-  if (!document.complete) {
-    entry.checked = document.checked;
-    const listed =
-      document.totalPages !== undefined && document.pagesFetched >= document.totalPages;
-    if (listed) entry.total = document.masters.length;
-  }
-  return entry;
-}
-
-async function readSummary(): Promise<MissingAlbumsSummary> {
-  return (
-    (await readCache<MissingAlbumsSummary>(SUMMARY_PATHNAME)) ?? {
-      updatedAt: new Date(0).toISOString(),
-      artists: {},
-    }
-  );
-}
-
-async function recordInSummary(document: ArtistAlbumsDocument): Promise<void> {
-  if (document.catalogKeys.length === 0) return;
-  const summary = await readSummary();
-  const entry = summaryEntry(document);
-  const unchanged = document.catalogKeys.every(
-    (key) => JSON.stringify(summary.artists[key]) === JSON.stringify(entry),
-  );
-  if (unchanged) return;
-  for (const key of document.catalogKeys) summary.artists[key] = entry;
-  summary.updatedAt = new Date().toISOString();
-  await writeCache(SUMMARY_PATHNAME, summary);
-}
-
-async function writeCache(pathname: string, document: unknown): Promise<void> {
-  await put(pathname, JSON.stringify(document), {
-    access: 'private',
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    contentType: 'application/json',
-  });
-}
-
-async function loadArtistAlbums(
-  releaseId: number,
-  token: string,
-  deadline: number,
-  key?: string,
-): Promise<ArtistAlbumsDocument> {
-  const release = await discogsGet<DiscogsReleaseDetail>(`/releases/${releaseId}`, token, deadline);
-  const artists = release.artists ?? [];
-  const artist = artists[0];
-  if (!artist) throw new Error('Release has no artist');
-  const partners = artists.slice(1).map((partner) => partner.name);
-
-  const emptyDocument: ArtistAlbumsDocument = {
-    cachedAt: new Date().toISOString(),
-    artist: { id: artist.id, name: artist.name },
-    masters: [],
-    pagesFetched: 0,
-    checked: 0,
-    albums: [],
-    complete: false,
-    catalogKeys: [],
-  };
-  if (artist.id === VARIOUS_ARTISTS_ID) return { ...emptyDocument, complete: true };
-
-  const pathname = `${CACHE_PREFIX}/artist-${artists.map((credit) => credit.id).join('-')}.json`;
-  const cached = await readCache<ArtistAlbumsDocument>(pathname);
-  let document: ArtistAlbumsDocument;
-  if (cached && (!cached.complete || isFresh(cached))) {
-    document = { ...cached, catalogKeys: cached.catalogKeys ?? [] };
-  } else if (cached) {
-    document = {
-      ...emptyDocument,
-      catalogKeys: cached.catalogKeys ?? [],
-      previousAlbums: cached.albums,
-    };
-  } else {
-    document = emptyDocument;
-  }
-
-  const isNewKey = key !== undefined && !document.catalogKeys.includes(key);
-  if (isNewKey) document.catalogKeys.push(key);
-  if (document.complete) {
-    if (isNewKey) await writeCache(pathname, document);
-    // Also repairs summary entries lost when two runs saved the summary at the same time.
-    await recordInSummary(document);
-    return document;
-  }
-
-  let listingError: unknown;
-  while (
-    (document.totalPages === undefined || document.pagesFetched < document.totalPages) &&
-    Date.now() < deadline
-  ) {
-    let data: DiscogsArtistReleasesPage;
-    try {
-      data = await discogsGet<DiscogsArtistReleasesPage>(
-        `/artists/${artist.id}/releases`,
-        token,
-        deadline,
-        {
-          sort: 'year',
-          sort_order: 'asc',
-          per_page: '100',
-          page: String(document.pagesFetched + 1),
-        },
-      );
-    } catch (error) {
-      listingError = error;
-      break;
-    }
-    document.masters.push(
-      ...data.releases
-        .filter(
-          (item) =>
-            item.type === 'master' &&
-            item.role === 'Main' &&
-            creditsAllArtists(item.artist, partners),
-        )
-        .map((item) => ({ masterId: item.id, title: item.title, year: item.year || undefined })),
-    );
-    document.pagesFetched++;
-    document.totalPages = data.pagination.pages;
-  }
-  const listed = document.totalPages !== undefined && document.pagesFetched >= document.totalPages;
-
-  while (listed && document.checked < document.masters.length && Date.now() < deadline) {
-    const master = document.masters[document.checked];
-    try {
-      const data = await discogsGet<DiscogsMasterVersionsPage>(
-        `/masters/${master.masterId}/versions`,
-        token,
-        deadline,
-        { format: 'Vinyl', per_page: '100' },
-      );
-      if (isVinylAlbum(data.versions)) document.albums.push(master);
-    } catch (error) {
-      if (error instanceof DiscogsRateLimitError) break;
-      // A master Discogs can't return is skipped rather than blocking the rest of the artist.
-    }
-    document.checked++;
-  }
-
-  document.complete = listed && document.checked >= document.masters.length;
-  await writeCache(pathname, document);
-  await recordInSummary(document);
-  if (listingError && !(listingError instanceof DiscogsRateLimitError)) throw listingError;
-  return document;
-}
-
+/**
+ * Official vinyl pressings of a master. Colour and weight need one request per pressing,
+ * so details are fetched in batches: `from` is where this batch starts, and `next` tells
+ * the caller where to continue, or is null once every pressing has its details.
+ */
 async function loadPressings(
   masterId: number,
+  from: number,
   token: string,
   deadline: number,
-): Promise<PressingsDocument> {
-  const pathname = `${CACHE_PREFIX}/master-${masterId}.json`;
-  const cached = await readCache<PressingsDocument>(pathname);
-  if (cached?.complete && isFresh(cached)) return cached;
-
+): Promise<{ pressings: VinylPressing[]; next: number | null }> {
+  const hardStop = deadline + REQUEST_GRACE_MS;
   const versions: DiscogsMasterVersion[] = [];
   for (let page = 1; ; page++) {
     const data = await discogsGet<DiscogsMasterVersionsPage>(
       `/masters/${masterId}/versions`,
       token,
-      deadline,
       {
         format: 'Vinyl',
         sort: 'released',
@@ -432,215 +204,45 @@ async function loadPressings(
         per_page: '100',
         page: String(page),
       },
+      hardStop,
     );
     versions.push(...data.versions.filter(isOfficialVersion));
     if (page >= data.pagination.pages) break;
   }
 
-  const known = new Map(cached?.pressings.map((pressing) => [pressing.releaseId, pressing]));
   const pressings: VinylPressing[] = [];
-  let complete = true;
-  for (const version of versions) {
-    const existing = known.get(version.id);
-    if (existing?.detailed) {
-      pressings.push(existing);
-    } else if (Date.now() < deadline) {
+  let next: number | null = null;
+  for (const [index, version] of versions.entries()) {
+    if (index < from || next !== null) {
+      pressings.push(toPressing(version));
+      continue;
+    }
+    try {
+      if (Date.now() >= deadline) throw new DiscogsRateLimitError('Time budget used');
       const detail = await discogsGet<DiscogsReleaseDetail>(
         `/releases/${version.id}`,
         token,
-        deadline,
+        {},
+        hardStop,
       );
       pressings.push(toPressing(version, detail));
-    } else {
-      complete = false;
+    } catch (error) {
+      if (!(error instanceof DiscogsRateLimitError)) throw error;
+      next = index;
       pressings.push(toPressing(version));
     }
   }
-
-  const document: PressingsDocument = {
-    cachedAt: new Date().toISOString(),
-    pressings: sortPressings(pressings),
-    complete,
-  };
-  await writeCache(pathname, document);
-  return document;
+  return { pressings, next };
 }
 
-/** One entry per artist credit in the collection, with a release to resolve it from. */
-export function collectionArtists(releases: CatalogRelease[]): Map<string, number> {
-  const artists = new Map<string, number>();
-  for (const release of releases) {
-    const credits = release.basicInfo.artists;
-    if (credits.length === 0 || credits[0].startsWith('Various')) continue;
-    const key = catalogKey(credits);
-    if (!artists.has(key)) artists.set(key, release.id);
-  }
-  return artists;
-}
-
-/**
- * Artists never checked come first, then ones mid-check, then the oldest results, so a huge
- * discography that takes many runs doesn't hold up the rest of the collection.
- */
-export function refreshOrder(
-  artists: Map<string, number>,
-  summary: MissingAlbumsSummary,
-  now = Date.now(),
-): Array<[string, number]> {
-  const due = [...artists].filter(([key]) => {
-    const entry = summary.artists[key];
-    return !entry || !entry.complete || now - Date.parse(entry.cachedAt) > CACHE_TTL_MS;
-  });
-  const rank = (key: string) => {
-    const entry = summary.artists[key];
-    if (!entry) return -Infinity;
-    return entry.complete ? Date.parse(entry.cachedAt) : Number.MIN_SAFE_INTEGER;
-  };
-  return due.sort(([left], [right]) => rank(left) - rank(right));
-}
-
-async function dueArtists(): Promise<Array<[string, number]>> {
-  const [catalog, summary] = await Promise.all([readCatalog(), readSummary()]);
-  return refreshOrder(collectionArtists(catalog.releases), summary);
-}
-
-async function refreshCollection(
-  token: string,
-  deadline: number,
-): Promise<{ processed: number; succeeded: number; remaining: number; pending: number }> {
-  const due = await dueArtists();
-  let processed = 0;
-  let succeeded = 0;
-  let unfinished = 0;
-  for (const [key, releaseId] of due) {
-    if (Date.now() >= deadline) break;
-    try {
-      const document = await loadArtistAlbums(releaseId, token, deadline, key);
-      succeeded++;
-      if (!document.complete) unfinished++;
-    } catch {
-      // Skip artists Discogs can't resolve; they are retried on the next refresh.
-      unfinished++;
-    }
-    processed++;
-  }
-  const remaining = due.length - processed;
-  return { processed, succeeded, remaining, pending: remaining + unfinished };
-}
-
-interface RefreshLock {
-  cachedAt: string;
-  runId: string;
-  expiresAt: number;
-  /** How the last run in the chain ended, for checking on the chain from outside. */
-  lastRun?: string;
-}
-
-/** Only one refresh chain runs at a time, so runs don't overwrite each other's summary writes. */
-async function claimRefreshLock(runId: string | undefined): Promise<string | null> {
-  const lock = await readCache<RefreshLock>(REFRESH_LOCK_PATHNAME);
-  if (lock && lock.expiresAt > Date.now() && lock.runId !== runId) return null;
-  const claimed = runId ?? crypto.randomUUID();
-  await writeRefreshLock(claimed, Date.now() + REFRESH_LOCK_MS);
-  return claimed;
-}
-
-async function writeRefreshLock(runId: string, expiresAt: number, lastRun?: string): Promise<void> {
-  await writeCache(REFRESH_LOCK_PATHNAME, {
-    cachedAt: new Date().toISOString(),
-    runId,
-    expiresAt,
-    lastRun,
-  } satisfies RefreshLock);
-}
-
-async function runRefresh(
-  req: VercelRequest,
-  token: string,
-  deadline: number,
-  runId: string,
-  hop: number,
-): Promise<void> {
-  let continues = false;
-  let lastRun: string;
-  try {
-    const result = await refreshCollection(token, deadline);
-    // Stop when everything is done, or when the only artists left keep failing.
-    const madeProgress = result.succeeded > 0 || result.remaining > 0;
-    continues = result.pending > 0 && madeProgress && hop < MAX_REFRESH_HOPS;
-    lastRun = `hop ${hop}: ${JSON.stringify(result)}`;
-    if (continues) {
-      const handOffStatus = await handOff(req, runId, hop + 1);
-      continues = handOffStatus === 202;
-      lastRun += ` handoff ${handOffStatus}`;
-    }
-  } catch (error) {
-    continues = false;
-    lastRun = `hop ${hop} failed: ${error instanceof Error ? error.message : String(error)}`;
-  }
-  // Release the lock so the next scheduled trigger can start a fresh chain.
-  if (!continues) await writeRefreshLock(runId, 0, lastRun).catch(() => undefined);
-}
-
-/** Starts the next refresh run, which replies as soon as it has taken over. */
-async function handOff(req: VercelRequest, runId: string, hop: number): Promise<number | string> {
-  const host = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host;
-  if (!host) return 'no host';
-  const url = `https://${host}/api/missing-albums?refresh=1&run=${runId}&hop=${hop}`;
-  let outcome: number | string = 'not attempted';
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(HANDOFF_TIMEOUT_MS) });
-      outcome = response.status;
-      if (response.status === 202) return 202;
-      outcome = `${response.status} ${await response.text()}`;
-    } catch (error) {
-      outcome = error instanceof Error ? error.message : String(error);
-    }
-  }
-  return outcome;
-}
-
-function positiveInteger(value: string | string[] | undefined): number | null {
+function nonNegativeInteger(value: string | string[] | undefined): number | null {
   const parsed = Number(Array.isArray(value) ? value[0] : value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-async function catalogKeyFor(releaseId: number): Promise<string | undefined> {
-  const catalog = await readCatalog();
-  const release = catalog.releases.find((candidate) => candidate.id === releaseId);
-  return release ? catalogKey(release.basicInfo.artists) : undefined;
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET').status(405).json({ error: 'Method not allowed' });
-    return;
-  }
-
-  if (req.query.status !== undefined) {
-    try {
-      const lock = await readCache<RefreshLock>(REFRESH_LOCK_PATHNAME);
-      res
-        .setHeader('Cache-Control', 'no-store')
-        .status(200)
-        .json({
-          running: !!lock && lock.expiresAt > Date.now(),
-          lastRun: lock?.lastRun ?? null,
-        });
-    } catch {
-      res.status(500).json({ error: 'Missing albums status could not be read' });
-    }
-    return;
-  }
-
-  if (req.query.summary !== undefined) {
-    try {
-      const summary = await readSummary();
-      res.setHeader('Cache-Control', 'no-store').status(200).json(summary);
-    } catch {
-      res.status(500).json({ error: 'Missing albums summary could not be read' });
-    }
     return;
   }
 
@@ -650,53 +252,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return;
   }
 
-  const deadline = Date.now() + TIME_BUDGET_MS;
-  if (req.query.refresh !== undefined) {
-    const requestedRun = Array.isArray(req.query.run) ? req.query.run[0] : req.query.run;
-    let runId: string | null;
-    try {
-      if ((await dueArtists()).length === 0) {
-        res.status(200).json({ upToDate: true });
-        return;
-      }
-      runId = await claimRefreshLock(requestedRun);
-    } catch {
-      res.status(502).json({ error: 'Missing albums refresh failed' });
-      return;
-    }
-    if (!runId) {
-      res.status(200).json({ skipped: 'A refresh is already running' });
-      return;
-    }
-    const hop = positiveInteger(req.query.hop) ?? 1;
-    // Reply right away so the caller (cron, page, or the previous run) isn't held open.
-    waitUntil(runRefresh(req, token, Date.now() + REFRESH_TIME_BUDGET_MS, runId, hop));
-    res.status(202).json({ started: true, hop });
-    return;
-  }
-
-  const releaseId = positiveInteger(req.query.releaseId);
-  const masterId = positiveInteger(req.query.masterId);
-  if (!releaseId && !masterId) {
-    res.status(400).json({ error: 'A releaseId or masterId is required' });
+  const masterId = nonNegativeInteger(req.query.masterId);
+  const from = nonNegativeInteger(req.query.from) ?? 0;
+  if (!masterId) {
+    res.status(400).json({ error: 'A masterId is required' });
     return;
   }
 
   try {
-    if (masterId) {
-      const { pressings, complete } = await loadPressings(masterId, token, deadline);
-      res.status(200).json({ pressings, complete });
-    } else {
-      const key = await catalogKeyFor(releaseId!);
-      const document = await loadArtistAlbums(releaseId!, token, deadline, key);
-      res.status(200).json({
-        artist: document.artist,
-        albums: document.albums,
-        complete: document.complete,
-        checked: document.checked,
-        total: document.masters.length,
-      });
-    }
+    const result = await loadPressings(masterId, from, token, Date.now() + TIME_BUDGET_MS);
+    if (result.next === null) res.setHeader('Cache-Control', PRESSINGS_CACHE_CONTROL);
+    res.status(200).json(result);
   } catch {
     res.status(502).json({ error: 'Discogs lookup failed' });
   }

@@ -1,11 +1,15 @@
 import handler from './catalog';
+import { fetchCollection } from './catalog-sync';
 import { readCatalog } from './catalog.repository';
 
 jest.mock('./catalog.repository', () => ({
+  CATALOG_SCHEMA_VERSION: 1,
   readCatalog: jest.fn(),
 }));
+jest.mock('./catalog-sync', () => ({ fetchCollection: jest.fn() }));
 
 const readCatalogMock = jest.mocked(readCatalog);
+const fetchCollectionMock = jest.mocked(fetchCollection);
 
 describe('catalog API', () => {
   const createResponse = () => {
@@ -46,14 +50,54 @@ describe('catalog API', () => {
     expect(response.json).toHaveBeenCalledWith({ error: 'Method not allowed' });
   });
 
-  it('returns an error when the private catalog cannot be read', async () => {
-    readCatalogMock.mockRejectedValue(new Error('malformed'));
-    const response = createResponse();
+  describe('when the private catalog cannot be read', () => {
+    beforeEach(() => {
+      readCatalogMock.mockRejectedValue(new Error('storage limit reached'));
+      jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    });
 
-    await handler({ method: 'GET' }, response);
+    afterEach(() => {
+      delete process.env.DISCOGS_USERNAME;
+      delete process.env.DISCOGS_TOKEN;
+    });
 
-    expect(response.status).toHaveBeenCalledWith(500);
-    expect(response.json).toHaveBeenCalledWith({ error: 'Catalog could not be read' });
+    it('serves the collection straight from Discogs', async () => {
+      process.env.DISCOGS_USERNAME = 'collector';
+      process.env.DISCOGS_TOKEN = 'token';
+      const releases = [
+        { id: 1, instanceId: 2, basicInfo: { title: 'Bleach', artists: ['Nirvana'], formats: [] } },
+      ];
+      fetchCollectionMock.mockResolvedValue(releases);
+      const response = createResponse();
+
+      await handler({ method: 'GET' }, response);
+
+      expect(fetchCollectionMock).toHaveBeenCalledWith('collector', 'token');
+      expect(response.status).toHaveBeenCalledWith(200);
+      expect(response.json).toHaveBeenCalledWith(
+        expect.objectContaining({ schemaVersion: 1, releases }),
+      );
+    });
+
+    it('returns an error without Discogs configuration', async () => {
+      const response = createResponse();
+
+      await handler({ method: 'GET' }, response);
+
+      expect(response.status).toHaveBeenCalledWith(500);
+      expect(response.json).toHaveBeenCalledWith({ error: 'Catalog could not be read' });
+    });
+
+    it('returns an error when Discogs fails too', async () => {
+      process.env.DISCOGS_USERNAME = 'collector';
+      process.env.DISCOGS_TOKEN = 'token';
+      fetchCollectionMock.mockRejectedValue(new Error('down'));
+      const response = createResponse();
+
+      await handler({ method: 'GET' }, response);
+
+      expect(response.status).toHaveBeenCalledWith(500);
+    });
   });
 
   it('does not issue a write authorization cookie', async () => {

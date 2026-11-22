@@ -106,22 +106,18 @@
                   @if (isArtistExpanded(group.key)) {
                     @let albumsState = artistAlbumsState(group);
                     <div class="missing-albums">
-                      @if (albumsState?.status === 'loading') {
+                      @if (albumsState?.status !== 'ready') {
                         <p class="missing-status">
-                          Checking Discogs for missing albums. The first check can take a minute or
-                          two.
-                          {{ artistProgress(group) }}
-                        </p>
-                      } @else if (albumsState?.status === 'error') {
-                        <p class="missing-status">
-                          Couldn't reach Discogs.
-                          <button
-                            type="button"
-                            class="inline-action"
-                            (click)="retryArtistAlbums(group)"
-                          >
-                            Try again
-                          </button>
+                          @if (summaryStatus() === 'error') {
+                            Couldn't load missing albums.
+                            <button type="button" class="inline-action" (click)="reloadSummary()">
+                              Try again
+                            </button>
+                          } @else if (summaryStatus() === 'loading') {
+                            Loading…
+                          } @else {
+                            {{ checkingMessage(group) }}
+                          }
                         </p>
                       } @else if (missingAlbums(group).length === 0) {
                         <p class="missing-status">You own every official album on vinyl.</p>

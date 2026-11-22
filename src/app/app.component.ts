@@ -98,7 +98,12 @@ export class AppComponent implements OnInit {
 
   private async reconcileCatalog(previousCatalog: CatalogDocument): Promise<void> {
     try {
-      await this.catalogService.write();
+      try {
+        await this.catalogService.write();
+      } catch (error) {
+        // The server still serves the collection from Discogs when it can't save it.
+        console.error('Failed to save the server catalog:', error);
+      }
       const refreshedCatalog = await this.catalogService.load();
       if (!refreshedCatalog) return;
 

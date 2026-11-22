@@ -6,13 +6,6 @@ export interface MissingAlbum {
   year?: number;
 }
 
-export interface ArtistAlbumsResult {
-  albums: MissingAlbum[];
-  complete: boolean;
-  checked: number;
-  total: number;
-}
-
 export interface VinylPressing {
   releaseId: number;
   year?: number;
@@ -22,6 +15,7 @@ export interface VinylPressing {
   discs?: number;
   descriptions: string[];
   details?: string;
+  detailed?: boolean;
 }
 
 // Shown in the line's own position (disc count) or implied by every vinyl album.
@@ -45,34 +39,79 @@ export interface MissingAlbumsSummary {
   >;
 }
 
-/** Matches the server's key for an artist credit in the collection. */
+/** Matches the key the missing albums workflow uses for an artist credit in the collection. */
 export function artistCreditKey(artists: string[]): string {
   return artists.join('|');
+}
+
+/** Published by the missing albums GitHub workflow (.github/workflows/missing-albums-refresh.yml). */
+const SUMMARY_URL =
+  'https://raw.githubusercontent.com/cadmanc/vinyl-archive/missing-albums-data/summary.json';
+const PRESSINGS_STORAGE_PREFIX = 'missing-albums-pressings:';
+const PRESSINGS_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+// A master with hundreds of pressings needs several batches; this stops a runaway loop.
+const MAX_PRESSING_BATCHES = 30;
+
+export function sortPressings(pressings: VinylPressing[]): VinylPressing[] {
+  return [...pressings].sort(
+    (left, right) =>
+      (left.year ?? Infinity) - (right.year ?? Infinity) || left.releaseId - right.releaseId,
+  );
 }
 
 @Injectable({ providedIn: 'root' })
 export class MissingAlbumsService {
   async loadSummary(): Promise<MissingAlbumsSummary> {
-    return this.request<MissingAlbumsSummary>('/api/missing-albums?summary=1');
+    return this.request<MissingAlbumsSummary>(SUMMARY_URL, { cache: 'no-cache' });
   }
 
-  /** Lets the server check new artists and refresh old results; the page doesn't wait on it. */
-  requestRefresh(): void {
-    void fetch('/api/missing-albums?refresh=1').catch(() => undefined);
+  /** Pressings are saved in this browser, so an album only waits on Discogs the first time. */
+  async loadPressings(masterId: number): Promise<VinylPressing[]> {
+    const saved = this.savedPressings(masterId);
+    if (saved) return saved;
+
+    const detailed = new Map<number, VinylPressing>();
+    let pressings: VinylPressing[] = [];
+    let from: number | null = 0;
+    for (let batch = 0; from !== null && batch < MAX_PRESSING_BATCHES; batch++) {
+      const result: { pressings: VinylPressing[]; next: number | null } = await this.request(
+        `/api/missing-albums?masterId=${masterId}&from=${from}`,
+      );
+      for (const pressing of result.pressings) {
+        if (pressing.detailed) detailed.set(pressing.releaseId, pressing);
+      }
+      pressings = result.pressings.map((pressing) => detailed.get(pressing.releaseId) ?? pressing);
+      from = result.next;
+    }
+    pressings = sortPressings(pressings);
+    if (from === null) this.savePressings(masterId, pressings);
+    return pressings;
   }
 
-  async loadArtistAlbums(releaseId: number): Promise<ArtistAlbumsResult> {
-    return this.request<ArtistAlbumsResult>(`/api/missing-albums?releaseId=${releaseId}`);
+  private savedPressings(masterId: number): VinylPressing[] | null {
+    try {
+      const raw = localStorage.getItem(PRESSINGS_STORAGE_PREFIX + masterId);
+      if (!raw) return null;
+      const saved = JSON.parse(raw) as { savedAt: number; pressings: VinylPressing[] };
+      return Date.now() - saved.savedAt < PRESSINGS_KEEP_MS ? saved.pressings : null;
+    } catch {
+      return null;
+    }
   }
 
-  async loadPressings(
-    masterId: number,
-  ): Promise<{ pressings: VinylPressing[]; complete: boolean }> {
-    return this.request(`/api/missing-albums?masterId=${masterId}`);
+  private savePressings(masterId: number, pressings: VinylPressing[]): void {
+    try {
+      localStorage.setItem(
+        PRESSINGS_STORAGE_PREFIX + masterId,
+        JSON.stringify({ savedAt: Date.now(), pressings }),
+      );
+    } catch {
+      // Storage full or unavailable; the pressings are simply fetched again next time.
+    }
   }
 
-  private async request<T>(url: string): Promise<T> {
-    const response = await fetch(url);
+  private async request<T>(url: string, init?: RequestInit): Promise<T> {
+    const response = await fetch(url, init);
     if (!response.ok) throw new Error(`Missing albums request failed with ${response.status}`);
     return (await response.json()) as T;
   }

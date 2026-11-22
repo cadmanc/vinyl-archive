@@ -36,7 +36,7 @@ type DiscogsCollectionResponse = {
   }>;
 };
 
-function formatRelease(item: DiscogsCollectionResponse['releases'][number]): CatalogRelease {
+export function formatRelease(item: DiscogsCollectionResponse['releases'][number]): CatalogRelease {
   const info = item.basic_information;
   return {
     id: info.id,
@@ -59,6 +59,15 @@ function formatRelease(item: DiscogsCollectionResponse['releases'][number]): Cat
       styles: info.styles,
     },
   };
+}
+
+export async function fetchCollection(username: string, token: string): Promise<CatalogRelease[]> {
+  const firstPage = await fetchCollectionPage(username, token, 1);
+  const items = [...firstPage.releases];
+  for (let page = 2; page <= firstPage.pagination.pages; page++) {
+    items.push(...(await fetchCollectionPage(username, token, page)).releases);
+  }
+  return items.map(formatRelease);
 }
 
 async function fetchCollectionPage(username: string, token: string, page: number) {
@@ -202,21 +211,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
 
     const existing = await readCatalog();
-    const firstPage = await fetchCollectionPage(username, token, 1);
-    const items = [...firstPage.releases];
-    for (let page = 2; page <= firstPage.pagination.pages; page++) {
-      items.push(...(await fetchCollectionPage(username, token, page)).releases);
-    }
-
     const existingById = new Map(existing.releases.map((release) => [release.id, release]));
-    const releases = items.map((item) => {
-      const serverRelease = formatRelease(item);
+    const releases = (await fetchCollection(username, token)).map((serverRelease) => {
       const persisted = existingById.get(serverRelease.id);
       return persisted
         ? { ...serverRelease, basicInfo: { ...serverRelease.basicInfo, ...persisted.basicInfo } }
         : serverRelease;
     });
-    await writeCatalog(releases);
+    // Saves count against the storage plan's monthly limit, so skip them when nothing changed.
+    if (JSON.stringify(releases) !== JSON.stringify(existing.releases)) {
+      await writeCatalog(releases);
+    }
     res.status(200).json({ ok: true });
   } catch {
     res.status(502).json({ error: 'Catalog synchronization failed' });

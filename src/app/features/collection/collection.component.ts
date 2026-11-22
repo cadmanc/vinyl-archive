@@ -50,7 +50,6 @@ export function formatPacificDateTime(date: Date): string {
 
 // "Various" credits hundreds of thousands of releases, so it has no meaningful discography.
 const MISSING_ALBUMS_EXCLUDED_ARTISTS = new Set(['various']);
-const MISSING_ALBUMS_POLL_MS = 2000;
 
 type LoadState<T> =
   | { status: 'loading'; checked?: number; total?: number }
@@ -133,6 +132,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
   artistAlbums = signal<Record<string, LoadState<MissingAlbum[]>>>({});
   /** Server-side check progress for artists whose albums aren't saved yet. */
   serverProgress = signal<Record<string, { checked: number; total?: number }>>({});
+  summaryStatus = signal<'loading' | 'ready' | 'error'>('loading');
   expandedArtists = signal<Set<string>>(new Set());
   albumPressings = signal<Record<number, LoadState<VinylPressing[]>>>({});
   expandedAlbums = signal<Set<number>>(new Set());
@@ -253,29 +253,25 @@ export class CollectionComponent implements OnInit, OnDestroy {
     return this.artistAlbums()[albumsKey(group)];
   }
 
-  artistProgress(group: CollectionGroup): string {
-    const state = this.artistAlbums()[albumsKey(group)];
-    return state?.status === 'loading' && state.total
-      ? `(${state.checked} of ${state.total} titles checked)`
+  checkingMessage(group: CollectionGroup): string {
+    const progress = this.serverProgress()[albumsKey(group)];
+    const counted = progress?.total
+      ? ` (${progress.checked} of ${progress.total} titles so far)`
       : '';
+    return `Still being checked on Discogs${counted}. This fills in on its own.`;
   }
 
   missingSummary(group: CollectionGroup): string {
     const state = this.artistAlbums()[albumsKey(group)];
     if (state?.status === 'ready') return `${this.missingAlbums(group).length} missing`;
-    if (state?.status === 'loading') return 'Checking Discogs…';
+    if (this.summaryStatus() !== 'ready') return 'Missing albums';
     const progress = this.serverProgress()[albumsKey(group)];
     if (progress?.total) return `Checking ${progress.checked} of ${progress.total}`;
-    if (progress) return 'Checking Discogs…';
-    return 'Missing albums';
+    return 'Checking Discogs…';
   }
 
   toggleArtistMissing(group: CollectionGroup): void {
     this.expandedArtists.update((current) => toggled(current, group.key));
-    const state = this.artistAlbums()[albumsKey(group)];
-    if (this.isArtistExpanded(group.key) && (!state || state.status === 'error')) {
-      void this.loadArtistAlbums(group);
-    }
   }
 
   isAlbumExpanded(masterId: number): boolean {
@@ -299,8 +295,8 @@ export class CollectionComponent implements OnInit, OnDestroy {
     }
   }
 
-  retryArtistAlbums(group: CollectionGroup): void {
-    void this.loadArtistAlbums(group);
+  reloadSummary(): void {
+    void this.loadMissingAlbumsSummary();
   }
 
   retryPressings(masterId: number): void {
@@ -308,6 +304,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
   }
 
   private async loadMissingAlbumsSummary(): Promise<void> {
+    this.summaryStatus.set('loading');
     try {
       const summary = await this.missingAlbumsService.loadSummary();
       this.artistAlbums.update((current) => {
@@ -324,51 +321,21 @@ export class CollectionComponent implements OnInit, OnDestroy {
         if (!entry.albums) progress[key] = { checked: entry.checked ?? 0, total: entry.total };
       }
       this.serverProgress.set(progress);
+      this.summaryStatus.set('ready');
     } catch (error) {
       console.error('Failed to load missing albums summary:', error);
-    }
-  }
-
-  private async loadArtistAlbums(group: CollectionGroup): Promise<void> {
-    const releaseId = group.releases[0]?.id;
-    if (!releaseId) return;
-    const key = albumsKey(group);
-    this.setArtistAlbums(key, { status: 'loading' });
-    try {
-      // A first check of a large discography spans several requests; the server saves progress.
-      for (;;) {
-        const result = await this.missingAlbumsService.loadArtistAlbums(releaseId);
-        if (result.complete) {
-          this.setArtistAlbums(key, { status: 'ready', value: result.albums });
-          return;
-        }
-        this.setArtistAlbums(key, {
-          status: 'loading',
-          checked: result.checked,
-          total: result.total,
-        });
-        await new Promise((resolve) => setTimeout(resolve, MISSING_ALBUMS_POLL_MS));
-      }
-    } catch (error) {
-      console.error('Failed to load missing albums:', error);
-      this.setArtistAlbums(key, { status: 'error' });
+      this.summaryStatus.set('error');
     }
   }
 
   private async loadPressings(masterId: number): Promise<void> {
     this.albumPressings.update((current) => ({ ...current, [masterId]: { status: 'loading' } }));
     try {
-      for (;;) {
-        const result = await this.missingAlbumsService.loadPressings(masterId);
-        if (result.complete) {
-          this.albumPressings.update((current) => ({
-            ...current,
-            [masterId]: { status: 'ready', value: result.pressings },
-          }));
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, MISSING_ALBUMS_POLL_MS));
-      }
+      const pressings = await this.missingAlbumsService.loadPressings(masterId);
+      this.albumPressings.update((current) => ({
+        ...current,
+        [masterId]: { status: 'ready', value: pressings },
+      }));
     } catch (error) {
       console.error('Failed to load vinyl pressings:', error);
       this.albumPressings.update((current) => ({ ...current, [masterId]: { status: 'error' } }));

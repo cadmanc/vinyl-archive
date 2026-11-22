@@ -1,23 +1,13 @@
-import {
-  collectionArtists,
+import handler, {
   creditsAllArtists,
-  refreshOrder,
   formatDescriptions,
   isAlbumVersion,
   isOfficialVersion,
   isVinylAlbum,
   parseYear,
   sortPressings,
-  summaryEntry,
   toPressing,
 } from './missing-albums';
-
-jest.mock('@vercel/blob', () => ({
-  BlobNotFoundError: class extends Error {},
-  get: jest.fn(),
-  put: jest.fn(),
-}));
-jest.mock('@vercel/functions', () => ({ waitUntil: jest.fn() }));
 
 const version = (format: string, id = 1) => ({ id, format });
 
@@ -58,96 +48,6 @@ describe('missing albums classification', () => {
     expect(parseYear('2019-10-04')).toBe(2019);
     expect(parseYear('0')).toBeUndefined();
     expect(parseYear(undefined)).toBeUndefined();
-  });
-});
-
-describe('collection refresh', () => {
-  const release = (id: number, artists: string[]) =>
-    ({ id, instanceId: id, basicInfo: { title: 'Album', artists, formats: [] } }) as never;
-
-  it('lists each artist credit once and skips Various Artists', () => {
-    const artists = collectionArtists([
-      release(1, ['Nirvana']),
-      release(2, ['Nirvana']),
-      release(3, ['BadBadNotGood', 'Ghostface Killah']),
-      release(4, ['Various']),
-    ]);
-    expect([...artists]).toEqual([
-      ['Nirvana', 1],
-      ['BadBadNotGood|Ghostface Killah', 3],
-    ]);
-  });
-
-  it('checks new artists first, then unfinished ones, then the oldest stale results', () => {
-    const now = Date.parse('2026-12-31T00:00:00Z');
-    const artists = new Map([
-      ['Fresh', 1],
-      ['Old', 2],
-      ['Older', 3],
-      ['New', 4],
-      ['Unfinished', 5],
-    ]);
-    const entry = (cachedAt: string, complete = true) => ({ cachedAt, complete, albums: [] });
-    const order = refreshOrder(
-      artists,
-      {
-        updatedAt: '',
-        artists: {
-          Fresh: entry('2026-12-30T00:00:00Z'),
-          Old: entry('2026-10-01T00:00:00Z'),
-          Older: entry('2026-09-01T00:00:00Z'),
-          Unfinished: entry('2026-12-30T00:00:00Z', false),
-        },
-      },
-      now,
-    ).map(([key]) => key);
-
-    expect(order).toEqual(['New', 'Unfinished', 'Older', 'Old']);
-  });
-});
-
-describe('summaryEntry', () => {
-  const document = {
-    cachedAt: '2026-11-19T00:00:00Z',
-    artist: { id: 1, name: 'Pink Floyd' },
-    masters: [
-      { masterId: 1, title: 'Animals' },
-      { masterId: 2, title: 'Meddle' },
-    ],
-    checked: 1,
-    albums: [{ masterId: 1, title: 'Animals' }],
-    catalogKeys: ['Pink Floyd'],
-  };
-
-  it('reports progress while a check is underway', () => {
-    expect(summaryEntry({ ...document, pagesFetched: 2, totalPages: 2, complete: false })).toEqual({
-      cachedAt: document.cachedAt,
-      complete: false,
-      albums: null,
-      checked: 1,
-      total: 2,
-    });
-  });
-
-  it('leaves the total out until the discography is fully listed', () => {
-    expect(
-      summaryEntry({ ...document, pagesFetched: 1, totalPages: 3, complete: false }).total,
-    ).toBeUndefined();
-  });
-
-  it('keeps the earlier albums while a stale result is rechecked', () => {
-    const previousAlbums = [{ masterId: 2, title: 'Meddle' }];
-    expect(
-      summaryEntry({ ...document, pagesFetched: 0, complete: false, previousAlbums }).albums,
-    ).toEqual(previousAlbums);
-  });
-
-  it('reports the albums once complete', () => {
-    expect(summaryEntry({ ...document, pagesFetched: 2, totalPages: 2, complete: true })).toEqual({
-      cachedAt: document.cachedAt,
-      complete: true,
-      albums: document.albums,
-    });
   });
 });
 
@@ -221,5 +121,78 @@ describe('toPressing', () => {
       toPressing({ id: 1, released: '2019' }),
     ];
     expect(sortPressings(pressings).map((pressing) => pressing.releaseId)).toEqual([1, 2, 3]);
+  });
+});
+
+describe('missing albums pressings handler', () => {
+  const versionsPage = {
+    pagination: { pages: 1 },
+    versions: [
+      { id: 11, format: 'LP, Album', released: '1991', country: 'US' },
+      { id: 12, format: 'LP, Album, Promo', released: '1991' },
+      { id: 13, format: 'LP, Album, Reissue', released: '2019', country: 'UK' },
+    ],
+  };
+  const detail = { formats: [{ name: 'Vinyl', qty: '2', descriptions: ['LP'], text: 'Red' }] };
+
+  const response = () => {
+    const res = {
+      statusCode: 0,
+      body: undefined as unknown,
+      headers: {} as Record<string, string>,
+      status: jest.fn((code: number) => {
+        res.statusCode = code;
+        return res;
+      }),
+      setHeader: jest.fn((name: string, value: string) => {
+        res.headers[name] = value;
+        return res;
+      }),
+      json: jest.fn((body: unknown) => {
+        res.body = body;
+        return res;
+      }),
+    };
+    return res;
+  };
+
+  beforeEach(() => {
+    process.env['DISCOGS_TOKEN'] = 'token';
+    global.fetch = jest.fn(async (url: string | URL) => {
+      const body = String(url).includes('/versions') ? versionsPage : detail;
+      return { ok: true, status: 200, headers: new Headers(), json: async () => body } as Response;
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    delete process.env['DISCOGS_TOKEN'];
+  });
+
+  it('returns official pressings with details from the requested position', async () => {
+    const res = response();
+    await handler({ method: 'GET', query: { masterId: '5', from: '1' } }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({
+      next: null,
+      pressings: [
+        expect.objectContaining({ releaseId: 11, detailed: false }),
+        expect.objectContaining({ releaseId: 13, detailed: true, discs: 2, details: 'Red' }),
+      ],
+    });
+    expect(res.headers['Cache-Control']).toContain('s-maxage');
+  });
+
+  it('requires a master id', async () => {
+    const res = response();
+    await handler({ method: 'GET', query: {} }, res);
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('reports Discogs failures', async () => {
+    global.fetch = jest.fn(async () => ({ ok: false, status: 500 }) as Response) as typeof fetch;
+    const res = response();
+    await handler({ method: 'GET', query: { masterId: '5' } }, res);
+    expect(res.statusCode).toBe(502);
   });
 });

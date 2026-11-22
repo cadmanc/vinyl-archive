@@ -1,45 +1,79 @@
 name: Missing albums refresh
 
-# Vercel stops a function from re-invoking itself after a few hops, so this keeps the
-# server-side refresh going: it restarts the chain whenever it stops, until nothing is due.
-# GitHub runs schedules late or skips them, so an unfinished job starts its own next run.
+# Checks the collection's artists on Discogs and publishes the results to the
+# missing-albums-data branch, which the site reads. Uses no Vercel resources.
+# A first full check takes several hours, so an unfinished run starts the next one.
 on:
   schedule:
-    - cron: '17 */2 * * *'
+    - cron: '23 11 * * *'
   workflow_dispatch:
 
 permissions:
+  contents: write
   actions: write
 
 concurrency:
   group: missing-albums-refresh
   cancel-in-progress: false
 
+env:
+  DATA_BRANCH: missing-albums-data
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 345
+    timeout-minutes: 340
     steps:
-      - name: Keep the refresh running
-        id: refresh
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Fetch saved results
         run: |
-          url="https://records.psamera.com/api/missing-albums"
-          end=$((SECONDS + 330 * 60))
-          while [ $SECONDS -lt $end ]; do
-            status=$(curl -sS --max-time 30 "$url?status=1" || true)
-            echo "status: $status"
-            if echo "$status" | grep -q '"running":false'; then
-              result=$(curl -sS --max-time 30 "$url?refresh=1" || true)
-              echo "refresh: $result"
-              if echo "$result" | grep -q '"upToDate":true'; then
-                echo "done=true" >> "$GITHUB_OUTPUT"
-                exit 0
-              fi
+          if git fetch --depth 1 origin "$DATA_BRANCH"; then
+            git worktree add data FETCH_HEAD
+          else
+            mkdir data
+          fi
+
+      - name: Check artists and publish
+        id: refresh
+        env:
+          DISCOGS_TOKEN: ${{ secrets.DISCOGS_TOKEN }}
+          DISCOGS_USERNAME: ${{ vars.DISCOGS_USERNAME || 'bedouin_surf' }}
+          DATA_DIR: data
+          TIME_BUDGET_MINUTES: 20
+        run: |
+          publish() {
+            tmp=$(mktemp -d)
+            cp -R data/. "$tmp"
+            rm -rf "$tmp/.git"
+            cd "$tmp"
+            git init -q -b "$DATA_BRANCH"
+            git add -A
+            git -c user.name="github-actions" -c user.email="github-actions@users.noreply.github.com" \
+              commit -q -m "Missing albums results"
+            git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
+              "HEAD:$DATA_BRANCH"
+            cd - > /dev/null
+            rm -rf "$tmp"
+          }
+          end=$((SECONDS + 300 * 60))
+          while :; do
+            npx --yes tsx@4 scripts/missing-albums-refresh.ts
+            publish
+            remaining=$(grep -o 'remaining=[0-9]*' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)
+            progressed=$(grep -o 'progressed=[a-z]*' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)
+            if [ "$remaining" = "0" ] || [ "$progressed" != "true" ] || [ $SECONDS -ge $end ]; then
+              break
             fi
-            sleep 60
           done
+          echo "continue=$([ "$remaining" != "0" ] && [ "$progressed" = "true" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
       - name: Continue in a new run
-        if: steps.refresh.outputs.done != 'true'
+        if: steps.refresh.outputs.continue == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run missing-albums-refresh.yml --repo "$GITHUB_REPOSITORY"

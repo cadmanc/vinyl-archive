@@ -1,7 +1,12 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "missing-albums-data": false
+    }
+  },
   "functions": {
     "api/missing-albums.ts": {
-      "maxDuration": 300
+      "maxDuration": 60
     }
   }
 }
