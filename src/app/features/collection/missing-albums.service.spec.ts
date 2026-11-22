@@ -116,4 +116,18 @@ describe('MissingAlbumsService.loadSummary', () => {
     expect(await new MissingAlbumsService().loadSummary()).toEqual(summary);
     expect(fetchMock.mock.calls[0][0]).toContain('raw.githubusercontent.com');
   });
+
+  it('treats a summary that is not published yet as nothing checked', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue({ ok: false, status: 404 }) as unknown as typeof fetch;
+    expect(await new MissingAlbumsService().loadSummary()).toEqual({ artists: {} });
+  });
+
+  it('reports other failures', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue({ ok: false, status: 500 }) as unknown as typeof fetch;
+    await expect(new MissingAlbumsService().loadSummary()).rejects.toThrow('500');
+  });
 });

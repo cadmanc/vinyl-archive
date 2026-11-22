@@ -62,7 +62,11 @@ export function sortPressings(pressings: VinylPressing[]): VinylPressing[] {
 @Injectable({ providedIn: 'root' })
 export class MissingAlbumsService {
   async loadSummary(): Promise<MissingAlbumsSummary> {
-    return this.request<MissingAlbumsSummary>(SUMMARY_URL, { cache: 'no-cache' });
+    const response = await fetch(SUMMARY_URL, { cache: 'no-cache' });
+    // Nothing is published until the workflow's first run finishes a batch of artists.
+    if (response.status === 404) return { artists: {} };
+    if (!response.ok) throw new Error(`Missing albums summary failed with ${response.status}`);
+    return (await response.json()) as MissingAlbumsSummary;
   }
 
   /** Pressings are saved in this browser, so an album only waits on Discogs the first time. */

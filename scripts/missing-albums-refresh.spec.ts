@@ -1,5 +1,6 @@
 import {
   buildSummary,
+  knownVerdict,
   catalogKey,
   collectionArtists,
   refreshOrder,
@@ -26,7 +27,9 @@ const document = (overrides: Partial<ArtistDocument> = {}): ArtistDocument => ({
   totalPages: 2,
   checked: 1,
   albums: [{ masterId: 1, title: 'Bleach' }],
+  nonAlbums: [],
   complete: false,
+  fullCheckAt: '2026-11-19T00:00:00Z',
   ...overrides,
 });
 
@@ -83,6 +86,42 @@ describe('summaryEntry', () => {
       complete: true,
       albums: [{ masterId: 1, title: 'Bleach' }],
     });
+  });
+});
+
+describe('rechecks', () => {
+  const now = Date.parse('2026-12-31T00:00:00Z');
+  const earlier = document({
+    complete: true,
+    checked: 2,
+    nonAlbums: [2],
+    fullCheckAt: '2026-11-01T00:00:00Z',
+  });
+
+  it('reuses earlier verdicts so only new titles need a Discogs request', () => {
+    const recheck = startDocument(nirvana, earlier, now);
+    const owned = new Set([99]);
+    expect(knownVerdict(1, recheck, owned)).toBe(true);
+    expect(knownVerdict(2, recheck, owned)).toBe(false);
+    expect(knownVerdict(99, recheck, owned)).toBe(true);
+    expect(knownVerdict(3, recheck, owned)).toBeUndefined();
+    expect(recheck.fullCheckAt).toBe(earlier.fullCheckAt);
+  });
+
+  it('looks at titles without a vinyl album again every six months', () => {
+    const recheck = startDocument(
+      nirvana,
+      { ...earlier, fullCheckAt: '2026-05-01T00:00:00Z' },
+      now,
+    );
+    expect(knownVerdict(2, recheck, new Set())).toBeUndefined();
+    expect(knownVerdict(1, recheck, new Set())).toBe(true);
+    expect(recheck.fullCheckAt).toBe(new Date(now).toISOString());
+  });
+
+  it('checks every title of a new artist', () => {
+    const first = startDocument(nirvana, undefined, now);
+    expect(knownVerdict(1, first, new Set())).toBeUndefined();
   });
 });
 

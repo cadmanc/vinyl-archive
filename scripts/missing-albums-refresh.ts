@@ -15,7 +15,11 @@ import {
   type DiscogsMasterVersionsPage,
 } from '../api/missing-albums.js';
 
-const CHECK_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Each month a discography is listed again to find titles added since the last check.
+const CHECK_INTERVAL_MS = 30 * DAY_MS;
+// Titles that had no vinyl album are only looked at again this often, for new reissues.
+const FULL_CHECK_INTERVAL_MS = 180 * DAY_MS;
 const VARIOUS_ARTISTS_ID = 194;
 // Leaves part of the shared Discogs rate limit for the site while this runs.
 const MIN_REQUEST_GAP_MS = 1_300;
@@ -40,9 +44,15 @@ export interface ArtistDocument {
   totalPages?: number;
   checked: number;
   albums: ArtistMaster[];
+  /** Titles checked that have no official vinyl album pressing. */
+  nonAlbums: number[];
   complete: boolean;
+  /** When titles without a vinyl album were last all looked at again. */
+  fullCheckAt: string;
   /** Results from the previous check, still shown while a recheck is in progress. */
   previousAlbums?: ArtistMaster[];
+  /** Earlier verdicts reused by a recheck, so only new titles cost a Discogs request. */
+  known?: { albums: number[]; nonAlbums: number[] };
 }
 
 export interface SummaryEntry {
@@ -55,13 +65,12 @@ export interface SummaryEntry {
 }
 
 export interface MissingAlbumsSummary {
-  updatedAt: string;
   artists: Record<string, SummaryEntry>;
 }
 
 interface CollectionPage {
   pagination: { pages: number };
-  releases: Array<{ basic_information: { artists: ArtistCredit[] } }>;
+  releases: Array<{ basic_information: { artists: ArtistCredit[]; master_id?: number } }>;
 }
 
 /** Matches how the site keys an artist credit: every credited name, joined by "|". */
@@ -126,7 +135,7 @@ export function buildSummary(
   artists: Map<string, ArtistCredit[]>,
   documents: Map<string, ArtistDocument>,
 ): MissingAlbumsSummary {
-  const summary: MissingAlbumsSummary = { updatedAt: new Date().toISOString(), artists: {} };
+  const summary: MissingAlbumsSummary = { artists: {} };
   for (const key of artists.keys()) {
     const document = documents.get(key);
     if (document) summary.artists[key] = summaryEntry(document);
@@ -134,17 +143,43 @@ export function buildSummary(
   return summary;
 }
 
-export function startDocument(artists: ArtistCredit[], previous?: ArtistDocument): ArtistDocument {
+export function startDocument(
+  artists: ArtistCredit[],
+  previous?: ArtistDocument,
+  now = Date.now(),
+): ArtistDocument {
+  const earlier = previous?.complete ? previous : undefined;
+  const fullCheck = !earlier || now - Date.parse(earlier.fullCheckAt) > FULL_CHECK_INTERVAL_MS;
   return {
-    cachedAt: new Date().toISOString(),
+    cachedAt: new Date(now).toISOString(),
     artists,
     masters: [],
     pagesFetched: 0,
     checked: 0,
     albums: [],
+    nonAlbums: [],
     complete: false,
-    previousAlbums: previous?.complete ? previous.albums : previous?.previousAlbums,
+    fullCheckAt: fullCheck ? new Date(now).toISOString() : earlier.fullCheckAt,
+    previousAlbums: earlier ? earlier.albums : previous?.previousAlbums,
+    known: earlier && {
+      albums: earlier.albums.map((album) => album.masterId),
+      nonAlbums: fullCheck ? [] : earlier.nonAlbums,
+    },
   };
+}
+
+/**
+ * Whether a title is a vinyl album without asking Discogs: owned titles never show as
+ * missing, and a recheck reuses earlier verdicts. Undefined means it needs a request.
+ */
+export function knownVerdict(
+  masterId: number,
+  document: ArtistDocument,
+  ownedMasters: Set<number>,
+): boolean | undefined {
+  if (ownedMasters.has(masterId) || document.known?.albums.includes(masterId)) return true;
+  if (document.known?.nonAlbums.includes(masterId)) return false;
+  return undefined;
 }
 
 class Refresher {
@@ -169,19 +204,25 @@ class Refresher {
     return discogsGet<T>(pathname, this.token, params);
   }
 
-  async collection(username: string): Promise<ArtistCredit[][]> {
+  async collection(
+    username: string,
+  ): Promise<{ credits: ArtistCredit[][]; ownedMasters: Set<number> }> {
     const credits: ArtistCredit[][] = [];
+    const ownedMasters = new Set<number>();
     for (let page = 1; ; page++) {
       const data = await this.get<CollectionPage>(
         `/users/${encodeURIComponent(username)}/collection/folders/0/releases`,
         { per_page: '100', page: String(page) },
       );
-      credits.push(...data.releases.map((release) => release.basic_information.artists));
-      if (page >= data.pagination.pages) return credits;
+      for (const { basic_information: info } of data.releases) {
+        credits.push(info.artists);
+        if (info.master_id) ownedMasters.add(info.master_id);
+      }
+      if (page >= data.pagination.pages) return { credits, ownedMasters };
     }
   }
 
-  async check(document: ArtistDocument): Promise<void> {
+  async check(document: ArtistDocument, ownedMasters: Set<number>): Promise<void> {
     const [artist, ...partners] = document.artists;
     const partnerNames = partners.map((partner) => partner.name);
     while (
@@ -214,11 +255,16 @@ class Refresher {
     while (listed && document.checked < document.masters.length && this.timeLeft()) {
       const master = document.masters[document.checked];
       try {
-        const data = await this.get<DiscogsMasterVersionsPage>(
-          `/masters/${master.masterId}/versions`,
-          { format: 'Vinyl', per_page: '100' },
-        );
-        if (isVinylAlbum(data.versions)) document.albums.push(master);
+        let album = knownVerdict(master.masterId, document, ownedMasters);
+        if (album === undefined) {
+          const data = await this.get<DiscogsMasterVersionsPage>(
+            `/masters/${master.masterId}/versions`,
+            { format: 'Vinyl', per_page: '100' },
+          );
+          album = isVinylAlbum(data.versions);
+        }
+        if (album) document.albums.push(master);
+        else document.nonAlbums.push(master.masterId);
       } catch (error) {
         // A master Discogs can't return is skipped rather than blocking the rest of the artist.
         console.warn(`Skipping master ${master.masterId}:`, error);
@@ -228,6 +274,7 @@ class Refresher {
     }
 
     document.complete = listed && document.checked >= document.masters.length;
+    if (document.complete) delete document.known;
     await this.save(document);
   }
 
@@ -250,6 +297,12 @@ export function totalProgress(documents: Map<string, ArtistDocument>): number {
     total += document.pagesFetched + document.checked + (document.complete ? 1 : 0);
   }
   return total;
+}
+
+/** Unchanged files leave the published branch untouched, so quiet runs publish nothing. */
+async function writeIfChanged(file: string, contents: string): Promise<void> {
+  const current = await readFile(file, 'utf8').catch(() => null);
+  if (current !== contents) await writeFile(file, contents);
 }
 
 async function readDocuments(
@@ -285,7 +338,8 @@ async function main(): Promise<void> {
 
   await mkdir(path.join(dataDir, 'artists'), { recursive: true });
   const refresher = new Refresher(token, dataDir, Date.now() + minutes * 60_000);
-  const artists = collectionArtists(await refresher.collection(username));
+  const { credits, ownedMasters } = await refresher.collection(username);
+  const artists = collectionArtists(credits);
   const documents = await readDocuments(dataDir, artists);
   const progressBefore = totalProgress(documents);
 
@@ -296,7 +350,7 @@ async function main(): Promise<void> {
       existing && !existing.complete ? existing : startDocument(artists.get(key)!, existing);
     documents.set(key, document);
     try {
-      await refresher.check(document);
+      await refresher.check(document, ownedMasters);
     } catch (error) {
       // Progress so far is kept; the artist is picked up again next run.
       console.warn(`Stopped checking ${key}:`, error);
@@ -308,8 +362,10 @@ async function main(): Promise<void> {
   }
 
   await pruneDocuments(dataDir, artists);
-  const summary = buildSummary(artists, documents);
-  await writeFile(path.join(dataDir, 'summary.json'), JSON.stringify(summary));
+  await writeIfChanged(
+    path.join(dataDir, 'summary.json'),
+    JSON.stringify(buildSummary(artists, documents)),
+  );
   const remaining = refreshOrder(artists, documents).length;
   // With nothing gained this run, the artists left keep failing; don't keep retrying them.
   const progressed = totalProgress(documents) > progressBefore;

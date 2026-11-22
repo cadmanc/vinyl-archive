@@ -46,7 +46,17 @@ jobs:
           DATA_DIR: data
           TIME_BUDGET_MINUTES: 20
         run: |
+          fingerprint() {
+            (cd data && find . -type f -not -path './.git*' -print0 | sort -z | xargs -0 -r sha256sum | sha256sum)
+          }
+          published=$(fingerprint)
           publish() {
+            current=$(fingerprint)
+            if [ "$current" = "$published" ]; then
+              echo "No changes to publish"
+              return
+            fi
+            published=$current
             tmp=$(mktemp -d)
             cp -R data/. "$tmp"
             rm -rf "$tmp/.git"
