@@ -7,6 +7,7 @@ import {
 import type { ReleaseEnrichment } from '../src/app/shared/models/release.model.js';
 
 const DISCOGS_API_URL = 'https://api.discogs.com';
+const DISCOGS_USER_AGENT = 'VinylArchive/1.0';
 
 type VercelRequest = { method?: string; body?: unknown };
 type VercelResponse = {
@@ -77,11 +78,24 @@ async function fetchCollectionPage(username: string, token: string, page: number
   );
   url.searchParams.set('page', String(page));
   url.searchParams.set('per_page', '100');
-  const response = await fetch(url, {
-    headers: { Accept: 'application/json', Authorization: `Discogs token=${token}` },
-  });
-  if (!response.ok) throw new Error('Discogs collection request failed');
-  return (await response.json()) as DiscogsCollectionResponse;
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': DISCOGS_USER_AGENT,
+        Authorization: `Discogs token=${token}`,
+      },
+    });
+    // The missing albums workflow shares the account's rate limit, so wait briefly and retry.
+    if (response.status === 429 && attempt < 3) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, (Number(response.headers.get('retry-after')) || 5) * 1000),
+      );
+      continue;
+    }
+    if (!response.ok) throw new Error(`Discogs collection request failed with ${response.status}`);
+    return (await response.json()) as DiscogsCollectionResponse;
+  }
 }
 
 const ENRICHMENT_KEYS = new Set<keyof ReleaseEnrichment>([

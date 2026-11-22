@@ -22,7 +22,7 @@ const CHECK_INTERVAL_MS = 30 * DAY_MS;
 const FULL_CHECK_INTERVAL_MS = 180 * DAY_MS;
 const VARIOUS_ARTISTS_ID = 194;
 // Leaves part of the shared Discogs rate limit for the site while this runs.
-const MIN_REQUEST_GAP_MS = 1_300;
+const MIN_REQUEST_GAP_MS = 1_500;
 const SAVE_EVERY_REQUESTS = 50;
 
 export interface ArtistCredit {
