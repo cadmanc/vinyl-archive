@@ -60,6 +60,8 @@ jobs:
             tmp=$(mktemp -d)
             cp -R data/. "$tmp"
             rm -rf "$tmp/.git"
+            # Vercel reads this from the pushed branch itself, so it must live here too.
+            printf '{ "git": { "deploymentEnabled": false } }\n' > "$tmp/vercel.json"
             cd "$tmp"
             git init -q -b "$DATA_BRANCH"
             git add -A
