@@ -346,6 +346,11 @@ $wanted-green: #4f7a3a;
     color: $wanted-green;
   }
 
+  &.read-only {
+    text-align: center;
+    cursor: default;
+  }
+
   &:disabled {
     opacity: 0.5;
     cursor: progress;

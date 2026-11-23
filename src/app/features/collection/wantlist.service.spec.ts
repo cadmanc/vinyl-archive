@@ -30,52 +30,54 @@ describe('WantlistService', () => {
     return service;
   };
 
-  it('loads the wantlist once for the visit with the owner key', async () => {
+  it('loads the wantlist once for the visit', async () => {
     const service = await loaded([1, 2]);
     await service.load();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith('/api/wantlist', ownerRequest());
+    expect(fetchMock).toHaveBeenCalledWith('/api/wantlist');
     expect(service.isWanted(1)).toBe(true);
     expect(service.isWanted(3)).toBe(false);
   });
 
-  it('stays off without requests on devices that are not unlocked', async () => {
+  it('shows visitors the wantlist without letting them change it', async () => {
     localStorage.clear();
-    const service = new WantlistService();
+    const service = await loaded([1]);
 
-    await service.load();
     await service.toggle(5);
 
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(service.wanted()).toBeNull();
+    expect(service.canEdit()).toBe(false);
+    expect(service.isWanted(1)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('saves the key from the owner link and removes it from the address bar', async () => {
     localStorage.clear();
     window.history.replaceState(null, '', '/?view=list#owner=new%20key');
 
-    const service = new WantlistService();
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ releaseIds: [] }) });
-    await service.load();
+    const service = await loaded([]);
+    fetchMock.mockResolvedValueOnce({ ok: true });
+    await service.toggle(5);
 
     expect(localStorage.getItem(KEY_STORAGE)).toBe('new key');
     expect(window.location.hash).toBe('');
     expect(window.location.search).toBe('?view=list');
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/wantlist',
+    expect(service.canEdit()).toBe(true);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/wantlist?releaseId=5',
       expect.objectContaining({ headers: { 'X-Owner-Key': 'new key' } }),
     );
   });
 
-  it('forgets a key the server no longer accepts', async () => {
+  it('becomes read-only when the server no longer accepts the key', async () => {
+    const service = await loaded([1]);
     fetchMock.mockResolvedValueOnce({ ok: false, status: 401 });
-    const service = new WantlistService();
 
-    await service.load();
+    await service.toggle(5);
 
-    expect(service.wanted()).toBeNull();
-    expect(service.failed()).toBe(false);
+    expect(service.canEdit()).toBe(false);
+    expect(service.isWanted(1)).toBe(true);
+    expect(service.isWanted(5)).toBe(false);
     expect(localStorage.getItem(KEY_STORAGE)).toBeNull();
   });
 

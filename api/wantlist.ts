@@ -30,7 +30,7 @@ function digest(value: string): Buffer {
   return createHash('sha256').update(value).digest();
 }
 
-/** The site is public, so only requests carrying the owner's key may read or change the wantlist. */
+/** Anyone can see the wantlist, but only requests carrying the owner's key may change it. */
 export function hasOwnerKey(req: VercelRequest, ownerKey: string): boolean {
   const provided = header(req, 'x-owner-key');
   if (!provided) return false;
@@ -72,10 +72,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return;
   }
   res.setHeader('Cache-Control', 'no-store');
-  if (!hasOwnerKey(req, ownerKey)) {
-    res.status(401).json({ error: 'The wantlist is only available to its owner' });
-    return;
-  }
 
   if (req.method === 'GET') {
     try {
@@ -88,6 +84,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   if (req.method !== 'PUT' && req.method !== 'DELETE') {
     res.setHeader('Allow', 'GET, PUT, DELETE').status(405).json({ error: 'Method not allowed' });
+    return;
+  }
+  if (!hasOwnerKey(req, ownerKey)) {
+    res.status(401).json({ error: 'Only the owner can change the wantlist' });
     return;
   }
   const releaseId = Number(

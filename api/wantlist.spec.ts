@@ -39,7 +39,7 @@ describe('wantlist API', () => {
     delete process.env.WANTLIST_OWNER_KEY;
   });
 
-  it('lists every wanted release across pages', async () => {
+  it('lists every wanted release across pages for anyone', async () => {
     fetchMock
       .mockResolvedValueOnce({
         ok: true,
@@ -51,7 +51,7 @@ describe('wantlist API', () => {
       });
     const response = createResponse();
 
-    await handler({ method: 'GET', query: {}, headers: owner }, response);
+    await handler({ method: 'GET', query: {}, headers: {} }, response);
 
     expect(response.statusCode).toBe(200);
     expect(response.body).toEqual({ releaseIds: [1, 2, 3] });
@@ -86,8 +86,8 @@ describe('wantlist API', () => {
   it.each([
     ['without a key', {}],
     ['with the wrong key', { 'x-owner-key': 'guess' }],
-  ])('refuses visitors %s', async (_, headers) => {
-    for (const method of ['GET', 'PUT', 'DELETE']) {
+  ])('refuses changes from visitors %s', async (_, headers) => {
+    for (const method of ['PUT', 'DELETE']) {
       const response = createResponse();
       await handler({ method, query: { releaseId: '42' }, headers }, response);
       expect(response.statusCode).toBe(401);

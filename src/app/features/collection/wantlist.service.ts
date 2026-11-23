@@ -25,16 +25,17 @@ function readOwnerKey(): string | null {
 /**
  * The Discogs wantlist, loaded with one request. It is fetched again when the tab is shown
  * after a while, so pressings added or removed on Discogs in another tab show correctly.
- * Only devices unlocked with the owner link (`/#owner=<key>`) can see or change it.
+ * Anyone can see it; only devices unlocked with the owner link (`/#owner=<key>`) can change it.
  */
 @Injectable({ providedIn: 'root' })
 export class WantlistService {
   readonly wanted = signal<ReadonlySet<number> | null>(null);
   readonly pending = signal<ReadonlySet<number>>(new Set());
   readonly failed = signal(false);
+  private ownerKey = readOwnerKey();
+  readonly canEdit = signal(this.ownerKey !== null);
   private loading: Promise<void> | null = null;
   private loadedAt = 0;
-  private ownerKey = readOwnerKey();
 
   constructor() {
     if (typeof document === 'undefined') return;
@@ -44,7 +45,6 @@ export class WantlistService {
   }
 
   load(): Promise<void> {
-    if (!this.ownerKey) return Promise.resolve();
     this.loading ??= this.fetchWanted();
     return this.loading;
   }
@@ -64,13 +64,15 @@ export class WantlistService {
   }
 
   async toggle(releaseId: number): Promise<void> {
-    if (this.wanted() === null || this.isPending(releaseId)) return;
+    if (!this.canEdit() || this.wanted() === null || this.isPending(releaseId)) return;
     const wanted = this.isWanted(releaseId);
     this.pending.update((current) => new Set(current).add(releaseId));
     try {
-      const response = await this.request(`/api/wantlist?releaseId=${releaseId}`, {
+      const response = await fetch(`/api/wantlist?releaseId=${releaseId}`, {
         method: wanted ? 'DELETE' : 'PUT',
+        headers: { 'X-Owner-Key': this.ownerKey ?? '' },
       });
+      if (response.status === 401) this.lock();
       if (!response.ok) throw new Error(`Wantlist update failed with ${response.status}`);
       this.wanted.update((current) => {
         const next = new Set(current);
@@ -89,19 +91,10 @@ export class WantlistService {
     }
   }
 
-  private async request(url: string, init: RequestInit = {}): Promise<Response> {
-    const response = await fetch(url, {
-      ...init,
-      headers: { 'X-Owner-Key': this.ownerKey ?? '' },
-    });
-    if (response.status === 401) this.lock();
-    return response;
-  }
-
-  /** A wrong or replaced key hides the buttons instead of failing on every album. */
+  /** A wrong or replaced key makes the buttons read-only instead of failing on every click. */
   private lock(): void {
     this.ownerKey = null;
-    this.wanted.set(null);
+    this.canEdit.set(false);
     try {
       window.localStorage.removeItem(OWNER_KEY_STORAGE);
     } catch {
@@ -111,8 +104,7 @@ export class WantlistService {
 
   private async fetchWanted(): Promise<void> {
     try {
-      const response = await this.request('/api/wantlist');
-      if (response.status === 401) return;
+      const response = await fetch('/api/wantlist');
       if (!response.ok) throw new Error(`Wantlist request failed with ${response.status}`);
       const { releaseIds } = (await response.json()) as { releaseIds: number[] };
       this.wanted.set(new Set(releaseIds));

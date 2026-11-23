@@ -174,7 +174,7 @@
                                       <span class="pressing-label">{{
                                         pressingLabel(pressing)
                                       }}</span>
-                                      @if (wantlist.wanted() !== null) {
+                                      @if (wantlist.wanted() !== null && wantlist.canEdit()) {
                                         <button
                                           type="button"
                                           class="wantlist-button"
@@ -196,6 +196,12 @@
                                               : 'Want'
                                           }}
                                         </button>
+                                      } @else if (wantlist.isWanted(pressing.releaseId)) {
+                                        <span
+                                          class="wantlist-button wanted read-only"
+                                          title="On the Discogs wantlist"
+                                          >Wanted</span
+                                        >
                                       } @else {
                                         <span class="wantlist-button-placeholder"></span>
                                       }
