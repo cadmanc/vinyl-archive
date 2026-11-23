@@ -1,16 +1,35 @@
 import { Injectable, signal } from '@angular/core';
 
-/** The Discogs wantlist, loaded with one request and kept for the rest of the visit. */
+const REFRESH_AFTER_MS = 30_000;
+
+/**
+ * The Discogs wantlist, loaded with one request. It is fetched again when the tab is shown
+ * after a while, so pressings added or removed on Discogs in another tab show correctly.
+ */
 @Injectable({ providedIn: 'root' })
 export class WantlistService {
   readonly wanted = signal<ReadonlySet<number> | null>(null);
   readonly pending = signal<ReadonlySet<number>>(new Set());
   readonly failed = signal(false);
   private loading: Promise<void> | null = null;
+  private loadedAt = 0;
+
+  constructor() {
+    if (typeof document === 'undefined') return;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') void this.refreshIfStale();
+    });
+  }
 
   load(): Promise<void> {
     this.loading ??= this.fetchWanted();
     return this.loading;
+  }
+
+  async refreshIfStale(): Promise<void> {
+    if (this.wanted() === null || Date.now() - this.loadedAt < REFRESH_AFTER_MS) return;
+    this.loading = this.fetchWanted();
+    await this.loading;
   }
 
   isWanted(releaseId: number): boolean {
@@ -53,6 +72,7 @@ export class WantlistService {
       if (!response.ok) throw new Error(`Wantlist request failed with ${response.status}`);
       const { releaseIds } = (await response.json()) as { releaseIds: number[] };
       this.wanted.set(new Set(releaseIds));
+      this.loadedAt = Date.now();
       this.failed.set(false);
     } catch (error) {
       console.error('Failed to load the Discogs wantlist:', error);

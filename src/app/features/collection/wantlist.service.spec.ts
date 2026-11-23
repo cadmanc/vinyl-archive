@@ -66,6 +66,25 @@ describe('WantlistService', () => {
     expect(service.isWanted(9)).toBe(true);
   });
 
+  it('picks up wantlist changes made on Discogs when the tab is shown again', async () => {
+    const now = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const service = await loaded([]);
+
+    await service.refreshIfStale();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    now.mockReturnValue(1_000_000 + 31_000);
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ releaseIds: [5] }) });
+    await service.refreshIfStale();
+    expect(service.isWanted(5)).toBe(true);
+    now.mockRestore();
+  });
+
+  it('does not fetch on tab changes before the wantlist is first needed', async () => {
+    await new WantlistService().refreshIfStale();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('ignores clicks before the wantlist has loaded', async () => {
     await new WantlistService().toggle(5);
     expect(fetchMock).not.toHaveBeenCalled();
