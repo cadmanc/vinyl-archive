@@ -1,3 +1,5 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
+
 const DISCOGS_API_URL = 'https://api.discogs.com';
 const DISCOGS_USER_AGENT = 'VinylArchive/1.0';
 const MAX_PAGES = 20;
@@ -24,19 +26,15 @@ function header(req: VercelRequest, name: string): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-/**
- * The site has no sign-in, so changes are only accepted from pages served by this site.
- * Browsers always send Origin on these requests and other sites can't forge it.
- */
-export function isSameOrigin(req: VercelRequest): boolean {
-  const origin = header(req, 'origin');
-  const host = header(req, 'x-forwarded-host') ?? header(req, 'host');
-  if (!origin || !host) return false;
-  try {
-    return new URL(origin).host === host;
-  } catch {
-    return false;
-  }
+function digest(value: string): Buffer {
+  return createHash('sha256').update(value).digest();
+}
+
+/** The site is public, so only requests carrying the owner's key may read or change the wantlist. */
+export function hasOwnerKey(req: VercelRequest, ownerKey: string): boolean {
+  const provided = header(req, 'x-owner-key');
+  if (!provided) return false;
+  return timingSafeEqual(digest(provided), digest(ownerKey));
 }
 
 async function discogs(path: string, token: string, init: RequestInit = {}): Promise<Response> {
@@ -68,17 +66,20 @@ async function wantedReleaseIds(username: string, token: string): Promise<number
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   const username = process.env.DISCOGS_USERNAME?.trim();
   const token = process.env.DISCOGS_TOKEN?.trim();
-  if (!username || !token) {
+  const ownerKey = process.env.WANTLIST_OWNER_KEY?.trim();
+  if (!username || !token || !ownerKey) {
     res.status(503).json({ error: 'Discogs server configuration is unavailable' });
+    return;
+  }
+  res.setHeader('Cache-Control', 'no-store');
+  if (!hasOwnerKey(req, ownerKey)) {
+    res.status(401).json({ error: 'The wantlist is only available to its owner' });
     return;
   }
 
   if (req.method === 'GET') {
     try {
-      res
-        .setHeader('Cache-Control', 'no-store')
-        .status(200)
-        .json({ releaseIds: await wantedReleaseIds(username, token) });
+      res.status(200).json({ releaseIds: await wantedReleaseIds(username, token) });
     } catch {
       res.status(502).json({ error: 'Discogs wantlist could not be read' });
     }
@@ -87,10 +88,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   if (req.method !== 'PUT' && req.method !== 'DELETE') {
     res.setHeader('Allow', 'GET, PUT, DELETE').status(405).json({ error: 'Method not allowed' });
-    return;
-  }
-  if (!isSameOrigin(req)) {
-    res.status(403).json({ error: 'Wantlist changes are only accepted from this site' });
     return;
   }
   const releaseId = Number(

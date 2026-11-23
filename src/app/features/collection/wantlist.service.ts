@@ -1,10 +1,31 @@
 import { Injectable, signal } from '@angular/core';
 
 const REFRESH_AFTER_MS = 30_000;
+const OWNER_KEY_STORAGE = 'wantlist-owner-key';
+const OWNER_LINK_PREFIX = '#owner=';
+
+function readOwnerKey(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    if (window.location.hash.startsWith(OWNER_LINK_PREFIX)) {
+      const key = decodeURIComponent(window.location.hash.slice(OWNER_LINK_PREFIX.length));
+      window.localStorage.setItem(OWNER_KEY_STORAGE, key);
+      window.history.replaceState(
+        window.history.state,
+        '',
+        window.location.pathname + window.location.search,
+      );
+    }
+    return window.localStorage.getItem(OWNER_KEY_STORAGE);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * The Discogs wantlist, loaded with one request. It is fetched again when the tab is shown
  * after a while, so pressings added or removed on Discogs in another tab show correctly.
+ * Only devices unlocked with the owner link (`/#owner=<key>`) can see or change it.
  */
 @Injectable({ providedIn: 'root' })
 export class WantlistService {
@@ -13,6 +34,7 @@ export class WantlistService {
   readonly failed = signal(false);
   private loading: Promise<void> | null = null;
   private loadedAt = 0;
+  private ownerKey = readOwnerKey();
 
   constructor() {
     if (typeof document === 'undefined') return;
@@ -22,6 +44,7 @@ export class WantlistService {
   }
 
   load(): Promise<void> {
+    if (!this.ownerKey) return Promise.resolve();
     this.loading ??= this.fetchWanted();
     return this.loading;
   }
@@ -45,7 +68,7 @@ export class WantlistService {
     const wanted = this.isWanted(releaseId);
     this.pending.update((current) => new Set(current).add(releaseId));
     try {
-      const response = await fetch(`/api/wantlist?releaseId=${releaseId}`, {
+      const response = await this.request(`/api/wantlist?releaseId=${releaseId}`, {
         method: wanted ? 'DELETE' : 'PUT',
       });
       if (!response.ok) throw new Error(`Wantlist update failed with ${response.status}`);
@@ -66,9 +89,30 @@ export class WantlistService {
     }
   }
 
+  private async request(url: string, init: RequestInit = {}): Promise<Response> {
+    const response = await fetch(url, {
+      ...init,
+      headers: { 'X-Owner-Key': this.ownerKey ?? '' },
+    });
+    if (response.status === 401) this.lock();
+    return response;
+  }
+
+  /** A wrong or replaced key hides the buttons instead of failing on every album. */
+  private lock(): void {
+    this.ownerKey = null;
+    this.wanted.set(null);
+    try {
+      window.localStorage.removeItem(OWNER_KEY_STORAGE);
+    } catch {
+      // Storage can be unavailable in private browsing; the key is already dropped for this visit.
+    }
+  }
+
   private async fetchWanted(): Promise<void> {
     try {
-      const response = await fetch('/api/wantlist');
+      const response = await this.request('/api/wantlist');
+      if (response.status === 401) return;
       if (!response.ok) throw new Error(`Wantlist request failed with ${response.status}`);
       const { releaseIds } = (await response.json()) as { releaseIds: number[] };
       this.wanted.set(new Set(releaseIds));

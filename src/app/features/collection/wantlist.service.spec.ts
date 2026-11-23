@@ -1,13 +1,27 @@
 import { WantlistService } from './wantlist.service';
 
+const KEY_STORAGE = 'wantlist-owner-key';
+
 describe('WantlistService', () => {
   let fetchMock: jest.Mock;
 
   beforeEach(() => {
+    localStorage.setItem(KEY_STORAGE, 'owner-secret');
     fetchMock = jest.fn();
     global.fetch = fetchMock as unknown as typeof fetch;
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
   });
+
+  afterEach(() => {
+    localStorage.clear();
+    window.history.replaceState(null, '', '/');
+  });
+
+  const ownerRequest = (method?: string) =>
+    expect.objectContaining({
+      ...(method ? { method } : {}),
+      headers: { 'X-Owner-Key': 'owner-secret' },
+    });
 
   const loaded = async (releaseIds: number[]) => {
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ releaseIds }) });
@@ -16,13 +30,53 @@ describe('WantlistService', () => {
     return service;
   };
 
-  it('loads the wantlist once for the visit', async () => {
+  it('loads the wantlist once for the visit with the owner key', async () => {
     const service = await loaded([1, 2]);
     await service.load();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('/api/wantlist', ownerRequest());
     expect(service.isWanted(1)).toBe(true);
     expect(service.isWanted(3)).toBe(false);
+  });
+
+  it('stays off without requests on devices that are not unlocked', async () => {
+    localStorage.clear();
+    const service = new WantlistService();
+
+    await service.load();
+    await service.toggle(5);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(service.wanted()).toBeNull();
+  });
+
+  it('saves the key from the owner link and removes it from the address bar', async () => {
+    localStorage.clear();
+    window.history.replaceState(null, '', '/?view=list#owner=new%20key');
+
+    const service = new WantlistService();
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ releaseIds: [] }) });
+    await service.load();
+
+    expect(localStorage.getItem(KEY_STORAGE)).toBe('new key');
+    expect(window.location.hash).toBe('');
+    expect(window.location.search).toBe('?view=list');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/wantlist',
+      expect.objectContaining({ headers: { 'X-Owner-Key': 'new key' } }),
+    );
+  });
+
+  it('forgets a key the server no longer accepts', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 401 });
+    const service = new WantlistService();
+
+    await service.load();
+
+    expect(service.wanted()).toBeNull();
+    expect(service.failed()).toBe(false);
+    expect(localStorage.getItem(KEY_STORAGE)).toBeNull();
   });
 
   it('adds a pressing that is not wanted yet', async () => {
@@ -31,7 +85,7 @@ describe('WantlistService', () => {
 
     await service.toggle(5);
 
-    expect(fetchMock).toHaveBeenLastCalledWith('/api/wantlist?releaseId=5', { method: 'PUT' });
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/wantlist?releaseId=5', ownerRequest('PUT'));
     expect(service.isWanted(5)).toBe(true);
     expect(service.isPending(5)).toBe(false);
   });
@@ -42,7 +96,7 @@ describe('WantlistService', () => {
 
     await service.toggle(5);
 
-    expect(fetchMock).toHaveBeenLastCalledWith('/api/wantlist?releaseId=5', { method: 'DELETE' });
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/wantlist?releaseId=5', ownerRequest('DELETE'));
     expect(service.isWanted(5)).toBe(false);
   });
 

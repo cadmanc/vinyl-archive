@@ -1,4 +1,4 @@
-import handler, { isSameOrigin } from './wantlist';
+import handler, { hasOwnerKey } from './wantlist';
 
 const createResponse = () => {
   const response = { statusCode: 0, body: undefined as unknown } as {
@@ -20,7 +20,7 @@ const createResponse = () => {
   return response;
 };
 
-const sameSite = { origin: 'https://records.psamera.com', host: 'records.psamera.com' };
+const owner = { 'x-owner-key': 'owner-secret' };
 
 describe('wantlist API', () => {
   let fetchMock: jest.Mock;
@@ -28,6 +28,7 @@ describe('wantlist API', () => {
   beforeEach(() => {
     process.env.DISCOGS_USERNAME = 'collector';
     process.env.DISCOGS_TOKEN = 'token';
+    process.env.WANTLIST_OWNER_KEY = 'owner-secret';
     fetchMock = jest.fn();
     global.fetch = fetchMock as unknown as typeof fetch;
   });
@@ -35,6 +36,7 @@ describe('wantlist API', () => {
   afterEach(() => {
     delete process.env.DISCOGS_USERNAME;
     delete process.env.DISCOGS_TOKEN;
+    delete process.env.WANTLIST_OWNER_KEY;
   });
 
   it('lists every wanted release across pages', async () => {
@@ -49,7 +51,7 @@ describe('wantlist API', () => {
       });
     const response = createResponse();
 
-    await handler({ method: 'GET', query: {}, headers: {} }, response);
+    await handler({ method: 'GET', query: {}, headers: owner }, response);
 
     expect(response.statusCode).toBe(200);
     expect(response.body).toEqual({ releaseIds: [1, 2, 3] });
@@ -58,11 +60,11 @@ describe('wantlist API', () => {
     );
   });
 
-  it('adds a release from this site', async () => {
+  it('adds a release for the owner', async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 201 });
     const response = createResponse();
 
-    await handler({ method: 'PUT', query: { releaseId: '42' }, headers: sameSite }, response);
+    await handler({ method: 'PUT', query: { releaseId: '42' }, headers: owner }, response);
 
     expect(fetchMock).toHaveBeenCalledWith(
       new URL('https://api.discogs.com/users/collector/wants/42'),
@@ -75,53 +77,50 @@ describe('wantlist API', () => {
     fetchMock.mockResolvedValue({ ok: false, status: 404 });
     const response = createResponse();
 
-    await handler({ method: 'DELETE', query: { releaseId: '42' }, headers: sameSite }, response);
+    await handler({ method: 'DELETE', query: { releaseId: '42' }, headers: owner }, response);
 
     expect(response.statusCode).toBe(200);
     expect(response.body).toEqual({ releaseId: 42, wanted: false });
   });
 
-  it('rejects changes from other sites', async () => {
-    const response = createResponse();
-
-    await handler(
-      {
-        method: 'PUT',
-        query: { releaseId: '42' },
-        headers: { origin: 'https://example.com', host: 'records.psamera.com' },
-      },
-      response,
-    );
-
-    expect(response.statusCode).toBe(403);
+  it.each([
+    ['without a key', {}],
+    ['with the wrong key', { 'x-owner-key': 'guess' }],
+  ])('refuses visitors %s', async (_, headers) => {
+    for (const method of ['GET', 'PUT', 'DELETE']) {
+      const response = createResponse();
+      await handler({ method, query: { releaseId: '42' }, headers }, response);
+      expect(response.statusCode).toBe(401);
+    }
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('requires a release id', async () => {
     const response = createResponse();
-    await handler({ method: 'PUT', query: {}, headers: sameSite }, response);
+    await handler({ method: 'PUT', query: {}, headers: owner }, response);
     expect(response.statusCode).toBe(400);
   });
 
   it('reports Discogs failures', async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 500 });
     const response = createResponse();
-    await handler({ method: 'PUT', query: { releaseId: '42' }, headers: sameSite }, response);
+    await handler({ method: 'PUT', query: { releaseId: '42' }, headers: owner }, response);
     expect(response.statusCode).toBe(502);
   });
 
-  it('needs the Discogs configuration', async () => {
-    delete process.env.DISCOGS_TOKEN;
+  it.each(['DISCOGS_TOKEN', 'WANTLIST_OWNER_KEY'])('needs %s to be configured', async (name) => {
+    delete process.env[name];
     const response = createResponse();
-    await handler({ method: 'GET', query: {}, headers: {} }, response);
+    await handler({ method: 'GET', query: {}, headers: owner }, response);
     expect(response.statusCode).toBe(503);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
-describe('isSameOrigin', () => {
-  it('requires an Origin header matching the host', () => {
-    expect(isSameOrigin({ query: {}, headers: sameSite })).toBe(true);
-    expect(isSameOrigin({ query: {}, headers: { host: 'records.psamera.com' } })).toBe(false);
-    expect(isSameOrigin({ query: {}, headers: { origin: 'not a url', host: 'a' } })).toBe(false);
+describe('hasOwnerKey', () => {
+  it('only accepts the exact key', () => {
+    expect(hasOwnerKey({ query: {}, headers: owner }, 'owner-secret')).toBe(true);
+    expect(hasOwnerKey({ query: {}, headers: owner }, 'owner-secret-2')).toBe(false);
+    expect(hasOwnerKey({ query: {}, headers: {} }, 'owner-secret')).toBe(false);
   });
 });
