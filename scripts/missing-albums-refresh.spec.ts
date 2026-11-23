@@ -119,6 +119,26 @@ describe('rechecks', () => {
     expect(recheck.fullCheckAt).toBe(new Date(now).toISOString());
   });
 
+  it('looks at recent titles without a vinyl album again on every recheck', () => {
+    const recheck = startDocument(
+      nirvana,
+      {
+        ...earlier,
+        masters: [
+          { masterId: 1, title: 'Bleach', year: 1989 },
+          { masterId: 2, title: 'Old Demo', year: 1988 },
+          { masterId: 3, title: 'New Live Album', year: 2026 },
+          { masterId: 4, title: 'Undated', year: undefined },
+        ],
+        nonAlbums: [2, 3, 4],
+      },
+      now,
+    );
+    expect(knownVerdict(2, recheck, new Set())).toBe(false);
+    expect(knownVerdict(3, recheck, new Set())).toBeUndefined();
+    expect(knownVerdict(4, recheck, new Set())).toBe(false);
+  });
+
   it('checks every title of a new artist', () => {
     const first = startDocument(nirvana, undefined, now);
     expect(knownVerdict(1, first, new Set())).toBeUndefined();

@@ -16,8 +16,9 @@ import {
 } from '../api/missing-albums.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-// Each month a discography is listed again to find titles added since the last check.
-const CHECK_INTERVAL_MS = 30 * DAY_MS;
+// The workflow runs on the 1st and 15th; anything checked on the previous run is due again.
+// Each recheck lists the discography again to find titles added since.
+const CHECK_INTERVAL_MS = 12 * DAY_MS;
 // Titles that had no vinyl album are only looked at again this often, for new reissues.
 const FULL_CHECK_INTERVAL_MS = 180 * DAY_MS;
 const VARIOUS_ARTISTS_ID = 194;
@@ -150,6 +151,14 @@ export function startDocument(
 ): ArtistDocument {
   const earlier = previous?.complete ? previous : undefined;
   const fullCheck = !earlier || now - Date.parse(earlier.fullCheckAt) > FULL_CHECK_INTERVAL_MS;
+  // New releases often reach Discogs before their vinyl does, so recent titles without a
+  // vinyl album are looked at again on every recheck, not just every six months.
+  const recentFrom = new Date(now).getUTCFullYear() - 1;
+  const recent = new Set(
+    earlier?.masters
+      .filter((master) => (master.year ?? 0) >= recentFrom)
+      .map((master) => master.masterId),
+  );
   return {
     cachedAt: new Date(now).toISOString(),
     artists,
@@ -163,7 +172,7 @@ export function startDocument(
     previousAlbums: earlier ? earlier.albums : previous?.previousAlbums,
     known: earlier && {
       albums: earlier.albums.map((album) => album.masterId),
-      nonAlbums: fullCheck ? [] : earlier.nonAlbums,
+      nonAlbums: fullCheck ? [] : earlier.nonAlbums.filter((masterId) => !recent.has(masterId)),
     },
   };
 }

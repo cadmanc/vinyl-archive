@@ -5,7 +5,8 @@ name: Missing albums refresh
 # A first full check takes several hours, so an unfinished run starts the next one.
 on:
   schedule:
-    - cron: '23 11 * * *'
+    # Twice a month (24 runs a year) keeps GitHub time to a minimum.
+    - cron: '23 11 1,15 * *'
   workflow_dispatch:
 
 permissions:
