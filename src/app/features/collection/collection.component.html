@@ -50,6 +50,14 @@
           {{ totalCopies() }} records
         }
       </span>
+      @if (overview(); as totals) {
+        <span class="record-count">
+          {{ totals.artists }} artists · {{ totals.missing }} albums missing
+          <button type="button" class="clear-filters" (click)="toggleOnlyMissing()">
+            {{ onlyMissing() ? 'Show all artists' : 'Show only artists with missing albums' }}
+          </button>
+        </span>
+      }
     </div>
   </header>
 
@@ -78,6 +86,8 @@
     <p class="collection-status">No records found in your collection.</p>
   } @else if (filteredReleases().length === 0) {
     <p class="collection-status">No records match these filters.</p>
+  } @else if (groups().length === 0) {
+    <p class="collection-status">Every artist here has all their albums on vinyl.</p>
   } @else {
     <section class="collection-list" aria-label="Your collection">
       @for (letter of letters; track letter) {
@@ -164,6 +174,31 @@
                                       <span class="pressing-label">{{
                                         pressingLabel(pressing)
                                       }}</span>
+                                      @if (wantlist.wanted() !== null) {
+                                        <button
+                                          type="button"
+                                          class="wantlist-button"
+                                          [class.wanted]="wantlist.isWanted(pressing.releaseId)"
+                                          [disabled]="wantlist.isPending(pressing.releaseId)"
+                                          [attr.aria-pressed]="
+                                            wantlist.isWanted(pressing.releaseId)
+                                          "
+                                          [title]="
+                                            wantlist.isWanted(pressing.releaseId)
+                                              ? 'On your Discogs wantlist. Click to remove it.'
+                                              : 'Add to your Discogs wantlist'
+                                          "
+                                          (click)="wantlist.toggle(pressing.releaseId)"
+                                        >
+                                          {{
+                                            wantlist.isWanted(pressing.releaseId)
+                                              ? 'Wanted'
+                                              : 'Want'
+                                          }}
+                                        </button>
+                                      } @else {
+                                        <span class="wantlist-button-placeholder"></span>
+                                      }
                                       <a
                                         class="pressing-link"
                                         [href]="

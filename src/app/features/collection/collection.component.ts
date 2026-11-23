@@ -14,6 +14,7 @@ import {
   pressingSummary,
   VinylPressing,
 } from './missing-albums.service';
+import { WantlistService } from './wantlist.service';
 import { MenuDrawerComponent } from '../../layout/menu-drawer/menu-drawer.component';
 import { SearchSheetComponent } from '../player/search-sheet/search-sheet.component';
 import { PlayHistorySheetComponent } from '../player/play-history-sheet/play-history-sheet.component';
@@ -114,7 +115,23 @@ export class CollectionComponent implements OnInit, OnDestroy {
     this.filterService.filters();
     return this.releases().filter((release) => this.filterService.matchesFilters(release));
   });
-  groups = computed(() => groupCollection(this.filteredReleases()));
+  onlyMissing = signal(false);
+  groups = computed(() => {
+    const groups = groupCollection(this.filteredReleases());
+    if (!this.onlyMissing()) return groups;
+    return groups.filter(
+      (group) => this.supportsMissingAlbums(group) && this.missingAlbums(group).length > 0,
+    );
+  });
+  /** Totals across the whole collection, shown once the missing albums summary has loaded. */
+  overview = computed(() => {
+    if (this.summaryStatus() !== 'ready') return null;
+    const artists = groupCollection(this.releases()).filter((group) =>
+      this.supportsMissingAlbums(group),
+    );
+    const missing = artists.reduce((total, group) => total + this.missingAlbums(group).length, 0);
+    return { artists: artists.length, missing };
+  });
   totalCopies = computed(() => countCopies(this.releases()));
   filteredCopies = computed(() => countCopies(this.filteredReleases()));
   hasActiveFilters = computed(() => this.filterService.hasActiveFilters());
@@ -154,6 +171,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
     private router: Router,
     private filterService: FilterService,
     private missingAlbumsService: MissingAlbumsService,
+    readonly wantlist: WantlistService,
   ) {
     this.masterReleaseService.releaseDetailUpdated?.pipe(takeUntil(this.destroy$)).subscribe(() => {
       void this.refreshReleases();
@@ -290,8 +308,13 @@ export class CollectionComponent implements OnInit, OnDestroy {
     return state?.status === 'ready' ? state.value : [];
   }
 
+  toggleOnlyMissing(): void {
+    this.onlyMissing.update((value) => !value);
+  }
+
   toggleAlbum(masterId: number): void {
     this.expandedAlbums.update((current) => toggled(current, masterId));
+    if (this.isAlbumExpanded(masterId)) void this.wantlist.load();
     const state = this.albumPressings()[masterId];
     if (this.isAlbumExpanded(masterId) && (!state || state.status === 'error')) {
       void this.loadPressings(masterId);

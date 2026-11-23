@@ -309,7 +309,8 @@ h1 {
 
 .pressing-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 6.5rem;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 4.5rem 6.5rem;
+  align-items: center;
   gap: 0.75rem;
   padding: 0.3rem 0;
   font-size: 0.75rem;
@@ -328,6 +329,29 @@ h1 {
   text-align: right;
 }
 
+$want-orange: #c4691c;
+$wanted-green: #4f7a3a;
+
+.wantlist-button {
+  padding: 0.1rem 0.4rem;
+  color: $want-orange;
+  font: inherit;
+  font-size: 0.7rem;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 0.25rem;
+  cursor: pointer;
+
+  &.wanted {
+    color: $wanted-green;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: progress;
+  }
+}
+
 .all-versions {
   display: inline-block;
   margin-top: 0.4rem;
@@ -336,7 +360,7 @@ h1 {
 
 @media (max-width: 42rem) {
   .pressing-row {
-    grid-template-columns: minmax(0, 1fr) 6rem;
+    grid-template-columns: minmax(0, 1fr) 4rem 6rem;
   }
 
   .pressing-label {
@@ -344,8 +368,15 @@ h1 {
     grid-row: 2;
   }
 
-  .pressing-link {
+  .wantlist-button,
+  .wantlist-button-placeholder {
     grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+
+  .pressing-link {
+    grid-column: 3;
     grid-row: 1 / span 2;
     align-self: center;
   }
