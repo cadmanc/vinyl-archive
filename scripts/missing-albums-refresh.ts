@@ -16,9 +16,9 @@ import {
 } from '../api/missing-albums.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-// The workflow runs on the 1st and 15th; anything checked on the previous run is due again.
+// The workflow runs Mondays and Thursdays; anything checked on the previous run is due again.
 // Each recheck lists the discography again to find titles added since.
-const CHECK_INTERVAL_MS = 12 * DAY_MS;
+const CHECK_INTERVAL_MS = 2 * DAY_MS;
 // Titles that had no vinyl album are only looked at again this often, for new reissues.
 const FULL_CHECK_INTERVAL_MS = 180 * DAY_MS;
 const VARIOUS_ARTISTS_ID = 194;
