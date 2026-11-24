@@ -15,6 +15,8 @@ import {
   VinylPressing,
 } from './missing-albums.service';
 import { WantlistService } from './wantlist.service';
+import { HiddenAlbumsService } from './hidden-albums.service';
+import { CollectionValueService } from './collection-value.service';
 import { MenuDrawerComponent } from '../../layout/menu-drawer/menu-drawer.component';
 import { SearchSheetComponent } from '../player/search-sheet/search-sheet.component';
 import { PlayHistorySheetComponent } from '../player/play-history-sheet/play-history-sheet.component';
@@ -153,6 +155,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
   expandedArtists = signal<Set<string>>(new Set());
   albumPressings = signal<Record<number, LoadState<VinylPressing[]>>>({});
   expandedAlbums = signal<Set<number>>(new Set());
+  openHiddenLists = signal<Set<string>>(new Set());
   readonly pressingSummary = pressingSummary;
   readonly pressingLabel = pressingLabel;
   get detailProgress() {
@@ -172,6 +175,8 @@ export class CollectionComponent implements OnInit, OnDestroy {
     private filterService: FilterService,
     private missingAlbumsService: MissingAlbumsService,
     readonly wantlist: WantlistService,
+    readonly hiddenAlbums: HiddenAlbumsService,
+    readonly collectionValue: CollectionValueService,
   ) {
     this.masterReleaseService.releaseDetailUpdated?.pipe(takeUntil(this.destroy$)).subscribe(() => {
       void this.refreshReleases();
@@ -196,6 +201,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
       this.filterService.setNotPlayedIn6Months(false);
     }
     void this.loadMissingAlbumsSummary();
+    void this.collectionValue.load();
     try {
       const releases = await this.db.getAllReleases();
       this.releases.set(sortCollection(releases));
@@ -261,10 +267,35 @@ export class CollectionComponent implements OnInit, OnDestroy {
   }
 
   missingAlbums(group: CollectionGroup): MissingAlbum[] {
+    return this.unownedAlbums(group).filter((album) => !this.hiddenAlbums.isHidden(album.masterId));
+  }
+
+  hiddenMissingAlbums(group: CollectionGroup): MissingAlbum[] {
+    return this.unownedAlbums(group).filter((album) => this.hiddenAlbums.isHidden(album.masterId));
+  }
+
+  private unownedAlbums(group: CollectionGroup): MissingAlbum[] {
     const state = this.artistAlbums()[albumsKey(group)];
     if (state?.status !== 'ready') return [];
     const owned = this.ownedMasterIds();
     return state.value.filter((album) => !owned.has(album.masterId));
+  }
+
+  isHiddenListOpen(group: CollectionGroup): boolean {
+    return this.openHiddenLists().has(group.key);
+  }
+
+  toggleHiddenList(group: CollectionGroup): void {
+    this.openHiddenLists.update((current) => toggled(current, group.key));
+  }
+
+  hideAlbum(masterId: number): void {
+    this.hiddenAlbums.hide(masterId);
+    this.expandedAlbums.update((current) => {
+      const next = new Set(current);
+      next.delete(masterId);
+      return next;
+    });
   }
 
   artistAlbumsState(group: CollectionGroup): LoadState<MissingAlbum[]> | undefined {

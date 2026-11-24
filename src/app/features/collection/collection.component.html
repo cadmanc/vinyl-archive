@@ -58,6 +58,11 @@
           </button>
         </span>
       }
+      @if (collectionValue.value(); as value) {
+        <span class="record-count" title="Discogs' estimate from recent marketplace sales">
+          Estimated value: {{ value.low }} low · {{ value.typical }} typical · {{ value.high }} high
+        </span>
+      }
     </div>
   </header>
 
@@ -130,22 +135,37 @@
                           }
                         </p>
                       } @else if (missingAlbums(group).length === 0) {
-                        <p class="missing-status">You own every official album on vinyl.</p>
+                        <p class="missing-status">
+                          {{
+                            hiddenMissingAlbums(group).length
+                              ? 'Nothing else is missing.'
+                              : 'You own every official album on vinyl.'
+                          }}
+                        </p>
                       } @else {
                         @for (album of missingAlbums(group); track album.masterId) {
                           <div class="missing-album">
-                            <button
-                              type="button"
-                              class="missing-album-row"
-                              [attr.aria-expanded]="isAlbumExpanded(album.masterId)"
-                              (click)="toggleAlbum(album.masterId)"
-                            >
-                              <span class="missing-album-title">{{ album.title }}</span>
+                            <div class="missing-album-row" (click)="toggleAlbum(album.masterId)">
+                              <button
+                                type="button"
+                                class="missing-album-title"
+                                [attr.aria-expanded]="isAlbumExpanded(album.masterId)"
+                              >
+                                {{ album.title }}
+                              </button>
+                              <button
+                                type="button"
+                                class="hide-album-button"
+                                title="Hide this album on this device so it stops counting as missing"
+                                (click)="hideAlbum(album.masterId); $event.stopPropagation()"
+                              >
+                                Hide
+                              </button>
                               <span class="missing-album-year">{{ album.year || '' }}</span>
                               <span class="missing-album-arrow" aria-hidden="true">{{
                                 isAlbumExpanded(album.masterId) ? '&#x25B2;' : '&#x25BC;'
                               }}</span>
-                            </button>
+                            </div>
                             @if (isAlbumExpanded(album.masterId)) {
                               @let pressings = pressingsState(album.masterId);
                               <div class="pressing-list">
@@ -229,6 +249,40 @@
                               </div>
                             }
                           </div>
+                        }
+                      }
+                      @if (albumsState?.status === 'ready') {
+                        @let hidden = hiddenMissingAlbums(group);
+                        @if (hidden.length) {
+                          <p class="missing-status hidden-summary">
+                            {{ hidden.length }} hidden
+                            {{ hidden.length === 1 ? 'album' : 'albums' }}
+                            <button
+                              type="button"
+                              class="inline-action"
+                              [attr.aria-expanded]="isHiddenListOpen(group)"
+                              (click)="toggleHiddenList(group)"
+                            >
+                              {{ isHiddenListOpen(group) ? 'Close' : 'Show to unhide' }}
+                            </button>
+                          </p>
+                          @if (isHiddenListOpen(group)) {
+                            @for (album of hidden; track album.masterId) {
+                              <div class="missing-album-row hidden-album-row">
+                                <span class="missing-album-title">{{ album.title }}</span>
+                                <button
+                                  type="button"
+                                  class="hide-album-button"
+                                  title="Show this album as missing again"
+                                  (click)="hiddenAlbums.unhide(album.masterId)"
+                                >
+                                  Unhide
+                                </button>
+                                <span class="missing-album-year">{{ album.year || '' }}</span>
+                                <span></span>
+                              </div>
+                            }
+                          }
                         }
                       }
                     </div>

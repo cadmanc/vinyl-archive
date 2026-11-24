@@ -1,5 +1,7 @@
 import { Release } from '../../shared/models/release.model';
 import { CollectionComponent, formatPacificDateTime } from './collection.component';
+import { HiddenAlbumsService } from './hidden-albums.service';
+import { artistCreditKey } from './missing-albums.service';
 import {
   artistSection,
   groupCollection,
@@ -153,5 +155,48 @@ describe('CollectionComponent original year display', () => {
     expect(component.trackCountLabel(pending)).toBe('Fetching...');
     expect(component.trackCountLabel(completed)).toBe(0);
     expect(component.labelAndCatalog(completed)).toBe('Unknown');
+  });
+});
+
+describe('CollectionComponent hidden missing albums', () => {
+  afterEach(() => localStorage.clear());
+
+  it('stops counting hidden albums as missing and lists them for unhiding', () => {
+    const hidden = new HiddenAlbumsService();
+    const component = new CollectionComponent(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      hidden,
+    );
+    const release: Release = {
+      id: 1,
+      instanceId: 1,
+      basicInfo: { title: 'Owned', artists: ['Artist'], formats: [] },
+      playCount: 0,
+      dateAdded: new Date(),
+    };
+    const [group] = groupCollection([release]);
+    component.artistAlbums.set({
+      [artistCreditKey(['Artist'])]: {
+        status: 'ready',
+        value: [
+          { masterId: 10, title: 'Studio Album', year: 2001 },
+          { masterId: 11, title: 'Compilation', year: 2005 },
+        ],
+      },
+    } as any);
+
+    component.hideAlbum(11);
+
+    expect(component.missingAlbums(group).map((album) => album.masterId)).toEqual([10]);
+    expect(component.hiddenMissingAlbums(group).map((album) => album.masterId)).toEqual([11]);
+    expect(component.missingSummary(group)).toBe('1 Album, 1 Missing');
+
+    hidden.unhide(11);
+    expect(component.missingAlbums(group)).toHaveLength(2);
   });
 });

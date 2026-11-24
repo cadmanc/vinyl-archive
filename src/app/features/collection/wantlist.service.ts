@@ -1,26 +1,7 @@
 import { Injectable, signal } from '@angular/core';
+import { forgetOwnerKey, readOwnerKey } from '../../core/owner-key';
 
 const REFRESH_AFTER_MS = 30_000;
-const OWNER_KEY_STORAGE = 'wantlist-owner-key';
-const OWNER_LINK_PREFIX = '#owner=';
-
-function readOwnerKey(): string | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    if (window.location.hash.startsWith(OWNER_LINK_PREFIX)) {
-      const key = decodeURIComponent(window.location.hash.slice(OWNER_LINK_PREFIX.length));
-      window.localStorage.setItem(OWNER_KEY_STORAGE, key);
-      window.history.replaceState(
-        window.history.state,
-        '',
-        window.location.pathname + window.location.search,
-      );
-    }
-    return window.localStorage.getItem(OWNER_KEY_STORAGE);
-  } catch {
-    return null;
-  }
-}
 
 /**
  * The Discogs wantlist, loaded with one request. It is fetched again when the tab is shown
@@ -95,11 +76,7 @@ export class WantlistService {
   private lock(): void {
     this.ownerKey = null;
     this.canEdit.set(false);
-    try {
-      window.localStorage.removeItem(OWNER_KEY_STORAGE);
-    } catch {
-      // Storage can be unavailable in private browsing; the key is already dropped for this visit.
-    }
+    forgetOwnerKey();
   }
 
   private async fetchWanted(): Promise<void> {
