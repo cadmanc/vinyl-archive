@@ -153,14 +153,19 @@
                               >
                                 {{ album.title }}
                               </button>
-                              <button
-                                type="button"
-                                class="hide-album-button"
-                                title="Hide this album on this device so it stops counting as missing"
-                                (click)="hideAlbum(album.masterId); $event.stopPropagation()"
-                              >
-                                Hide
-                              </button>
+                              @if (hiddenAlbums.canEdit()) {
+                                <button
+                                  type="button"
+                                  class="hide-album-button"
+                                  title="Hide this album everywhere so it stops counting as missing"
+                                  [disabled]="hiddenAlbums.isPending(album.masterId)"
+                                  (click)="hideAlbum(album.masterId); $event.stopPropagation()"
+                                >
+                                  {{ hiddenAlbums.isPending(album.masterId) ? 'Hiding…' : 'Hide' }}
+                                </button>
+                              } @else {
+                                <span></span>
+                              }
                               <span class="missing-album-year">{{ album.year || '' }}</span>
                               <span class="missing-album-arrow" aria-hidden="true">{{
                                 isAlbumExpanded(album.masterId) ? '&#x25B2;' : '&#x25BC;'
@@ -253,7 +258,7 @@
                       }
                       @if (albumsState?.status === 'ready') {
                         @let hidden = hiddenMissingAlbums(group);
-                        @if (hidden.length) {
+                        @if (hidden.length && hiddenAlbums.canEdit()) {
                           <p class="missing-status hidden-summary">
                             {{ hidden.length }} hidden
                             {{ hidden.length === 1 ? 'album' : 'albums' }}
@@ -274,9 +279,12 @@
                                   type="button"
                                   class="hide-album-button"
                                   title="Show this album as missing again"
+                                  [disabled]="hiddenAlbums.isPending(album.masterId)"
                                   (click)="hiddenAlbums.unhide(album.masterId)"
                                 >
-                                  Unhide
+                                  {{
+                                    hiddenAlbums.isPending(album.masterId) ? 'Saving…' : 'Unhide'
+                                  }}
                                 </button>
                                 <span class="missing-album-year">{{ album.year || '' }}</span>
                                 <span></span>

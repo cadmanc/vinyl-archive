@@ -1,0 +1,87 @@
+/**
+ * Owner-controlled files (hidden albums, wantlist) on the owner-data branch, which the site
+ * reads straight from GitHub. Written through the GitHub contents API so the site's owner
+ * changes and the scheduled job never overwrite each other. Files starting with "_" aren't
+ * deployed as their own Vercel function.
+ */
+export const OWNER_DATA_BRANCH = 'owner-data';
+const DEFAULT_REPOSITORY = 'cadmanc/vinyl-archive';
+const ATTEMPTS = 4;
+
+export interface WantlistFile {
+  releaseIds: number[];
+}
+
+export interface HiddenAlbumsFile {
+  masterIds: number[];
+}
+
+function contentsUrl(file: string): string {
+  const repository = process.env['GITHUB_DATA_REPOSITORY']?.trim() || DEFAULT_REPOSITORY;
+  return `https://api.github.com/repos/${repository}/contents/${encodeURIComponent(file)}`;
+}
+
+function headers(token: string): Record<string, string> {
+  return {
+    Accept: 'application/vnd.github+json',
+    Authorization: `Bearer ${token}`,
+    'User-Agent': 'VinylArchive/1.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+}
+
+async function readFile<T>(
+  file: string,
+  token: string,
+): Promise<{ value: T | null; sha?: string }> {
+  const response = await fetch(`${contentsUrl(file)}?ref=${OWNER_DATA_BRANCH}`, {
+    headers: headers(token),
+  });
+  if (response.status === 404) return { value: null };
+  if (!response.ok) throw new Error(`GitHub read of ${file} failed with ${response.status}`);
+  const body = (await response.json()) as { content: string; sha: string };
+  return {
+    value: JSON.parse(Buffer.from(body.content, 'base64').toString('utf8')) as T,
+    sha: body.sha,
+  };
+}
+
+export async function readOwnerFile<T>(file: string, token: string): Promise<T | null> {
+  return (await readFile<T>(file, token)).value;
+}
+
+/**
+ * Applies `update` to the latest copy of the file and saves it, retrying when someone else
+ * saved in between. Nothing is written when the update leaves the file unchanged.
+ */
+export async function updateOwnerFile<T>(
+  file: string,
+  token: string,
+  update: (current: T | null) => T,
+  message: string,
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    const { value, sha } = await readFile<T>(file, token);
+    const next = update(value);
+    if (value !== null && JSON.stringify(next) === JSON.stringify(value)) return next;
+    const response = await fetch(contentsUrl(file), {
+      method: 'PUT',
+      headers: { ...headers(token), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message,
+        branch: OWNER_DATA_BRANCH,
+        content: Buffer.from(`${JSON.stringify(next, null, 1)}\n`).toString('base64'),
+        ...(sha ? { sha } : {}),
+      }),
+    });
+    if (response.ok) return next;
+    const conflict = response.status === 409 || response.status === 422;
+    if (!conflict || attempt >= ATTEMPTS) {
+      throw new Error(`GitHub write of ${file} failed with ${response.status}`);
+    }
+  }
+}
+
+export function sortedIds(ids: Iterable<number>): number[] {
+  return [...new Set(ids)].sort((left, right) => left - right);
+}

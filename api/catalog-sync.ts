@@ -5,6 +5,9 @@ import {
   type CatalogRelease,
 } from './catalog.repository.js';
 import type { ReleaseEnrichment } from '../src/app/shared/models/release.model.js';
+import { formatRelease, type DiscogsCollectionResponse } from './_catalog-format.js';
+
+export { formatRelease };
 
 const DISCOGS_API_URL = 'https://api.discogs.com';
 const DISCOGS_USER_AGENT = 'VinylArchive/1.0';
@@ -15,52 +18,6 @@ type VercelResponse = {
   setHeader: (name: string, value: string) => VercelResponse;
   json: (body: unknown) => VercelResponse;
 };
-
-type DiscogsCollectionResponse = {
-  pagination: { pages: number };
-  releases: Array<{
-    instance_id: number;
-    date_added: string;
-    basic_information: {
-      id: number;
-      title: string;
-      artists: Array<{ name: string }>;
-      year?: number;
-      master_id?: number;
-      formats: Array<{ name: string; qty: string; descriptions?: string[] }>;
-      thumb?: string;
-      cover_image?: string;
-      labels: Array<{ name: string; catno?: string }>;
-      genres?: string[];
-      styles?: string[];
-    };
-  }>;
-};
-
-export function formatRelease(item: DiscogsCollectionResponse['releases'][number]): CatalogRelease {
-  const info = item.basic_information;
-  return {
-    id: info.id,
-    instanceId: item.instance_id,
-    basicInfo: {
-      title: info.title,
-      artists: info.artists.map((artist) => artist.name),
-      year: info.year || undefined,
-      masterId: info.master_id || undefined,
-      formats: info.formats.map(
-        (format) =>
-          `${format.name}${format.descriptions?.length ? ` (${format.descriptions.join(', ')})` : ''}`,
-      ),
-      thumb: info.thumb,
-      coverImage: info.cover_image,
-      labels: info.labels.map((label) => label.name),
-      label: info.labels[0]?.name,
-      catalogNumber: info.labels[0]?.catno,
-      genres: info.genres,
-      styles: info.styles,
-    },
-  };
-}
 
 export async function fetchCollection(username: string, token: string): Promise<CatalogRelease[]> {
   const firstPage = await fetchCollectionPage(username, token, 1);

@@ -1,6 +1,6 @@
 import { createComponentFactory, Spectator } from '@ngneat/spectator/jest';
 import { provideRouter, Router } from '@angular/router';
-import { AppComponent } from './app.component';
+import { AppComponent, mergeBasicInfo } from './app.component';
 import { DatabaseService } from './core/database.service';
 import { CredentialsService } from './core/credentials.service';
 import { MasterReleaseService } from './features/discogs/master-release.service';
@@ -113,36 +113,6 @@ describe('AppComponent', () => {
       expect(router.navigate).toHaveBeenCalledWith(['/collection']);
     });
 
-    it('should synchronize an empty configured catalog and bypass /sync', async () => {
-      const router = spectator.inject(Router);
-      const db = spectator.inject(DatabaseService);
-      const config = spectator.inject(DiscogsConfigService);
-      const catalogService = spectator.inject(CatalogService);
-      mockCredentialsService.hasCredentials.mockReturnValue(false);
-      config.load.mockResolvedValue({ configured: true, username: 'server-user' });
-      catalogService.load
-        .mockResolvedValueOnce({ schemaVersion: 1, updatedAt: '', releases: [] })
-        .mockResolvedValueOnce({
-          schemaVersion: 1,
-          updatedAt: '2026-08-20T00:00:00.000Z',
-          releases: [
-            {
-              id: 2,
-              instanceId: 20,
-              basicInfo: { title: 'Synced Album', artists: ['Artist'], formats: ['LP'] },
-            },
-          ],
-        });
-      db.getCollectionCount.mockResolvedValue(0);
-
-      await spectator.component.ngOnInit();
-
-      expect(catalogService.write).toHaveBeenCalledTimes(1);
-      expect(db.addRelease).toHaveBeenCalled();
-      expect(router.navigate).toHaveBeenCalledWith(['/collection']);
-      expect(router.navigate).not.toHaveBeenCalledWith(['/sync']);
-    });
-
     it('should navigate to /sync when credentials exist but no data', async () => {
       const router = spectator.inject(Router);
       const db = spectator.inject(DatabaseService);
@@ -166,91 +136,6 @@ describe('AppComponent', () => {
       await spectator.component.ngOnInit();
 
       expect(router.navigate).toHaveBeenCalledWith(['/collection']);
-    });
-
-    it('should render the Blob catalog before background reconciliation completes', async () => {
-      const router = spectator.inject(Router);
-      const config = spectator.inject(DiscogsConfigService);
-      const catalogService = spectator.inject(CatalogService);
-      config.load.mockResolvedValue({ configured: true, username: 'server-user' });
-      catalogService.load.mockResolvedValue({
-        schemaVersion: 1,
-        updatedAt: '',
-        releases: [
-          { id: 1, instanceId: 10, basicInfo: { title: 'Album', artists: [], formats: [] } },
-        ],
-      });
-      catalogService.write.mockReturnValue(new Promise(() => undefined));
-      spectator.inject(DatabaseService).getCollectionCount.mockResolvedValue(1);
-
-      await spectator.component.ngOnInit();
-
-      expect(router.navigate).toHaveBeenCalledWith(['/collection']);
-    });
-
-    it('should import only releases newly returned by the server reconciliation', async () => {
-      const config = spectator.inject(DiscogsConfigService);
-      const catalogService = spectator.inject(CatalogService);
-      const db = spectator.inject(DatabaseService);
-      const masterReleaseService = spectator.inject(MasterReleaseService);
-      config.load.mockResolvedValue({ configured: true, username: 'server-user' });
-      catalogService.load
-        .mockResolvedValueOnce({
-          schemaVersion: 1,
-          updatedAt: '',
-          releases: [
-            { id: 1, instanceId: 10, basicInfo: { title: 'Album', artists: [], formats: [] } },
-          ],
-        })
-        .mockResolvedValueOnce({
-          schemaVersion: 1,
-          updatedAt: '',
-          releases: [
-            { id: 1, instanceId: 10, basicInfo: { title: 'Album', artists: [], formats: [] } },
-            {
-              id: 2,
-              instanceId: 20,
-              basicInfo: { title: 'New Album', artists: [], formats: [], detailsFetched: true },
-            },
-          ],
-        });
-      db.getCollectionCount.mockResolvedValue(1);
-      db.getAllReleases.mockResolvedValue([{ id: 1 } as never]);
-
-      await spectator.component.ngOnInit();
-      await new Promise((resolve) => setTimeout(resolve));
-
-      expect(db.addRelease).toHaveBeenCalledTimes(1);
-      expect(db.addRelease).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }));
-      expect(masterReleaseService.startReleaseDetailEnrichmentFor).toHaveBeenCalledWith([
-        expect.objectContaining({
-          id: 2,
-          basicInfo: expect.objectContaining({ detailsFetched: true }),
-        }),
-      ]);
-    });
-
-    it('should remove local releases that are no longer in the Discogs collection', async () => {
-      const config = spectator.inject(DiscogsConfigService);
-      const catalogService = spectator.inject(CatalogService);
-      const db = spectator.inject(DatabaseService);
-      const album = (id: number) => ({
-        id,
-        instanceId: id * 10,
-        basicInfo: { title: `Album ${id}`, artists: [], formats: [] },
-      });
-      config.load.mockResolvedValue({ configured: true, username: 'server-user' });
-      catalogService.load
-        .mockResolvedValueOnce({ schemaVersion: 1, updatedAt: '', releases: [album(1), album(2)] })
-        .mockResolvedValueOnce({ schemaVersion: 1, updatedAt: '', releases: [album(1)] });
-      db.getCollectionCount.mockResolvedValue(2);
-      db.getAllReleases.mockResolvedValue([{ id: 1 }, { id: 2 }] as never);
-
-      await spectator.component.ngOnInit();
-      await new Promise((resolve) => setTimeout(resolve));
-
-      expect(db.removeReleasesNotIn).toHaveBeenNthCalledWith(1, new Set([1, 2]));
-      expect(db.removeReleasesNotIn).toHaveBeenLastCalledWith(new Set([1]));
     });
 
     it('should store duplicate copies of a release once with its copy count', async () => {
@@ -277,26 +162,32 @@ describe('AppComponent', () => {
       expect(db.addRelease).toHaveBeenCalledWith(expect.objectContaining({ id: 7, copies: 2 }));
     });
 
-    it('should update the copy count when it changes on Discogs', async () => {
+    it('should update copies and remove releases that left the Discogs collection', async () => {
       const config = spectator.inject(DiscogsConfigService);
       const catalogService = spectator.inject(CatalogService);
       const db = spectator.inject(DatabaseService);
-      const copy = (instanceId: number) => ({
-        id: 7,
+      const copy = (id: number, instanceId: number) => ({
+        id,
         instanceId,
-        basicInfo: { title: 'Tical', artists: [], formats: [] },
+        basicInfo: { title: `Album ${id}`, artists: [], formats: [] },
       });
       config.load.mockResolvedValue({ configured: true, username: 'server-user' });
-      catalogService.load
-        .mockResolvedValueOnce({ schemaVersion: 1, updatedAt: '', releases: [copy(70)] })
-        .mockResolvedValueOnce({ schemaVersion: 1, updatedAt: '', releases: [copy(70), copy(71)] });
+      catalogService.load.mockResolvedValue({
+        schemaVersion: 1,
+        updatedAt: '',
+        releases: [copy(7, 70), copy(7, 71)],
+      });
       db.getCollectionCount.mockResolvedValue(1);
-      db.getAllReleases.mockResolvedValue([{ id: 7, copies: 1 }] as never);
+      db.getAllReleases.mockResolvedValue([
+        { id: 7, copies: 1, basicInfo: { title: 'Album 7', artists: [], formats: [] } },
+        { id: 8, basicInfo: { title: 'Album 8', artists: [], formats: [] } },
+      ] as never);
 
       await spectator.component.ngOnInit();
-      await new Promise((resolve) => setTimeout(resolve));
 
-      expect(db.updateRelease).toHaveBeenLastCalledWith(7, { copies: 2 });
+      expect(catalogService.load).toHaveBeenCalledTimes(1);
+      expect(db.updateRelease).toHaveBeenCalledWith(7, expect.objectContaining({ copies: 2 }));
+      expect(db.removeReleasesNotIn).toHaveBeenCalledWith(new Set([7]));
       expect(db.addRelease).not.toHaveBeenCalled();
     });
 
@@ -324,5 +215,25 @@ describe('AppComponent', () => {
 
       expect(db.getCollectionCount).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('mergeBasicInfo', () => {
+  const local = { title: 'Album', artists: [], formats: [], trackCount: 9, originalYear: 1990 };
+
+  it('prefers the saved catalog once it has details', () => {
+    const stored = {
+      title: 'Album',
+      artists: [],
+      formats: [],
+      detailsFetched: true,
+      trackCount: 10,
+    };
+    expect(mergeBasicInfo(local, stored)).toEqual({ ...local, ...stored });
+  });
+
+  it('keeps details this browser looked up while the saved catalog has none', () => {
+    const stored = { title: 'Album', artists: [], formats: [], label: 'Label' };
+    expect(mergeBasicInfo(local, stored)).toEqual({ ...stored, ...local });
   });
 });

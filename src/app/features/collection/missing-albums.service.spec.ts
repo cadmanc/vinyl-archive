@@ -67,9 +67,27 @@ describe('MissingAlbumsService.loadPressings', () => {
 
   beforeEach(() => localStorage.clear());
 
-  it('combines batches, sorts by year and saves the result in the browser', async () => {
+  const notSaved = { ok: false, status: 404 };
+
+  it('reads pressings the scheduled job saved on GitHub', async () => {
+    const saved = [detailed(1, 1991), detailed(2, 2019)];
     const fetchMock = jest
       .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ next: null, pressings: saved }) });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    expect(await service.loadPressings(42)).toEqual(saved);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://raw.githubusercontent.com/cadmanc/vinyl-archive/missing-albums-data/pressings/master-42.json',
+      { cache: 'no-cache' },
+    );
+  });
+
+  it('looks pressings up until the job has saved them, keeping them in the browser', async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(notSaved)
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ pressings: [detailed(2, 2019), basic(1, 1991)], next: 1 }),
@@ -83,20 +101,20 @@ describe('MissingAlbumsService.loadPressings', () => {
     const pressings = await service.loadPressings(42);
 
     expect(fetchMock).toHaveBeenNthCalledWith(
-      1,
+      2,
       '/api/missing-albums?masterId=42&from=0',
       undefined,
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
+      3,
       '/api/missing-albums?masterId=42&from=1',
       undefined,
     );
     expect(pressings).toEqual([detailed(1, 1991), detailed(2, 2019)]);
 
-    fetchMock.mockClear();
+    fetchMock.mockClear().mockResolvedValue(notSaved);
     expect(await service.loadPressings(42)).toEqual(pressings);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('reports failures', async () => {

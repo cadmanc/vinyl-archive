@@ -1,12 +1,13 @@
 name: Missing albums refresh
 
-# Checks the collection's artists on Discogs and publishes the results to the
-# missing-albums-data branch, which the site reads. Uses no Vercel resources.
-# A first full check takes several hours, so an unfinished run starts the next one.
+# Saves everything the site shows (catalog with record details, missing albums and their
+# pressings) to the missing-albums-data branch, and the wantlist to the owner-data branch,
+# so browsers never wait on Discogs. Uses no Vercel resources.
+# A first full pass takes days, so an unfinished run starts the next one.
 on:
   schedule:
-    # Mondays and Thursdays, about 3 AM Pacific.
-    - cron: '23 11 * * 1,4'
+    # Daily, about 3 AM Pacific. Discographies are listed again about twice a week.
+    - cron: '23 11 * * *'
   workflow_dispatch:
 
 permissions:
@@ -34,45 +35,41 @@ jobs:
       - name: Fetch saved results
         run: |
           if git fetch --depth 1 origin "$DATA_BRANCH"; then
-            git worktree add data FETCH_HEAD
+            git worktree add --detach data FETCH_HEAD
           else
-            mkdir data
+            git worktree add --orphan data
           fi
+          # Vercel reads this from the pushed branch itself, so it must live here too.
+          printf '{ "git": { "deploymentEnabled": false } }\n' > data/vercel.json
 
-      - name: Check artists and publish
+      - name: Refresh and publish
         id: refresh
         env:
           DISCOGS_TOKEN: ${{ secrets.DISCOGS_TOKEN }}
           DISCOGS_USERNAME: ${{ vars.DISCOGS_USERNAME || 'bedouin_surf' }}
+          GITHUB_TOKEN: ${{ github.token }}
           DATA_DIR: data
           TIME_BUDGET_MINUTES: 20
         run: |
-          fingerprint() {
-            (cd data && find . -type f -not -path './.git*' -print0 | sort -z | xargs -0 -r sha256sum | sha256sum)
-          }
-          published=$(fingerprint)
           publish() {
-            current=$(fingerprint)
-            if [ "$current" = "$published" ]; then
+            cd data
+            git add -A
+            if git diff --cached --quiet "origin/$DATA_BRANCH" -- 2>/dev/null; then
               echo "No changes to publish"
+              cd - > /dev/null
               return
             fi
-            published=$current
-            tmp=$(mktemp -d)
-            cp -R data/. "$tmp"
-            rm -rf "$tmp/.git"
-            # Vercel reads this from the pushed branch itself, so it must live here too.
-            printf '{ "git": { "deploymentEnabled": false } }\n' > "$tmp/vercel.json"
-            cd "$tmp"
-            git init -q -b "$DATA_BRANCH"
-            git add -A
-            git -c user.name="github-actions" -c user.email="github-actions@users.noreply.github.com" \
-              commit -q -m "Missing albums results"
+            # A single parentless commit keeps the branch from growing a history, while the
+            # push still only uploads files that changed.
+            tree=$(git write-tree)
+            commit=$(git -c user.name="github-actions" -c user.email="github-actions@users.noreply.github.com" \
+              commit-tree "$tree" -m "Saved site data")
             git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
-              "HEAD:$DATA_BRANCH"
+              "$commit:refs/heads/$DATA_BRANCH"
+            git fetch -q --depth 1 origin "$DATA_BRANCH:refs/remotes/origin/$DATA_BRANCH"
             cd - > /dev/null
-            rm -rf "$tmp"
           }
+          git -C data fetch -q --depth 1 origin "$DATA_BRANCH:refs/remotes/origin/$DATA_BRANCH" || true
           end=$((SECONDS + 300 * 60))
           while :; do
             npx --yes tsx@4 scripts/missing-albums-refresh.ts

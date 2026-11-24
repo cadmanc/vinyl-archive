@@ -6,13 +6,19 @@ import { MasterReleaseService } from './features/discogs/master-release.service'
 import { PwaUpdateService } from './core/pwa-update.service';
 import { AchievementsService } from './features/achievements/achievements.service';
 import { DiscogsConfigService } from './core/discogs-config.service';
-import {
-  CatalogDocument,
-  CatalogRelease,
-  CatalogService,
-  groupCatalogCopies,
-} from './core/catalog.service';
+import { CatalogRelease, CatalogService, groupCatalogCopies } from './core/catalog.service';
 import { Release } from './shared/models/release.model';
+
+/**
+ * The saved catalog is checked on a schedule, so its details win once it has them; until
+ * then, details this browser already looked up are kept.
+ */
+export function mergeBasicInfo(
+  local: Release['basicInfo'],
+  stored: Release['basicInfo'],
+): Release['basicInfo'] {
+  return stored.detailsFetched ? { ...local, ...stored } : { ...stored, ...local };
+}
 
 @Component({
   selector: 'app-root',
@@ -48,16 +54,7 @@ export class AppComponent implements OnInit {
       return;
     }
 
-    let catalog = await this.catalogService.load();
-    const hadPopulatedCatalog = Boolean(catalog?.releases.length);
-    if (!catalog?.releases.length && serverConfig.configured) {
-      try {
-        await this.catalogService.write();
-        catalog = await this.catalogService.load();
-      } catch (error) {
-        console.error('Failed to synchronize the server catalog:', error);
-      }
-    }
+    const catalog = await this.catalogService.load();
     let importedCatalog = false;
     if (catalog?.releases.length) {
       importedCatalog = true;
@@ -69,7 +66,7 @@ export class AppComponent implements OnInit {
           await this.db.updateRelease(stored.id, {
             instanceId: stored.instanceId,
             copies,
-            basicInfo: { ...stored.basicInfo, ...local.basicInfo },
+            basicInfo: mergeBasicInfo(local.basicInfo, stored.basicInfo),
           });
         } else {
           await this.db.addRelease({ ...this.catalogReleaseToRelease(stored), copies });
@@ -90,57 +87,6 @@ export class AppComponent implements OnInit {
     const releases = await this.db.getAllReleases();
     this.achievementsService.initialize(releases);
     this.router.navigate(['/collection']);
-
-    if (serverConfig.configured && hadPopulatedCatalog && catalog?.releases.length) {
-      void this.reconcileCatalog(catalog);
-    }
-  }
-
-  private async reconcileCatalog(previousCatalog: CatalogDocument): Promise<void> {
-    try {
-      try {
-        await this.catalogService.write();
-      } catch (error) {
-        // The server still serves the collection from Discogs when it can't save it.
-        console.error('Failed to save the server catalog:', error);
-      }
-      const refreshedCatalog = await this.catalogService.load();
-      if (!refreshedCatalog) return;
-
-      await this.db.removeReleasesNotIn(
-        new Set(refreshedCatalog.releases.map((release) => release.id)),
-      );
-
-      const knownIds = new Set(previousCatalog.releases.map((release) => release.id));
-      const localReleases = (await this.db.getAllReleases()) ?? [];
-      const localById = new Map(localReleases.map((release) => [release.id, release]));
-      const addedReleases: Release[] = [];
-      let copiesChanged = false;
-
-      for (const { release: stored, copies } of groupCatalogCopies(refreshedCatalog.releases)) {
-        const local = localById.get(stored.id);
-        if (local) {
-          if ((local.copies ?? 1) !== copies) {
-            await this.db.updateRelease(stored.id, { copies });
-            copiesChanged = true;
-          }
-          continue;
-        }
-        if (knownIds.has(stored.id)) continue;
-        const release = { ...this.catalogReleaseToRelease(stored), copies };
-        await this.db.addRelease(release);
-        addedReleases.push(release);
-      }
-
-      if (copiesChanged) {
-        this.db.collectionChanged?.next();
-      }
-      if (addedReleases.length) {
-        void this.masterReleaseService.startReleaseDetailEnrichmentFor(addedReleases);
-      }
-    } catch (error) {
-      console.error('Failed to reconcile the server catalog in the background:', error);
-    }
   }
 
   private catalogReleaseToRelease(stored: CatalogRelease): Release {

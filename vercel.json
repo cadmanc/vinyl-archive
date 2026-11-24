@@ -1,7 +1,8 @@
 {
   "git": {
     "deploymentEnabled": {
-      "missing-albums-data": false
+      "missing-albums-data": false,
+      "owner-data": false
     }
   },
   "functions": {

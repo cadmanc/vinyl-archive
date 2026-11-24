@@ -89,7 +89,12 @@ export class DatabaseService extends Dexie {
    */
   async getReleasesNeedingMasterData(): Promise<Release[]> {
     const all = await this.releases.toArray();
-    return all.filter((r) => r.basicInfo.masterId != null && r.basicInfo.originalYear == null);
+    return all.filter(
+      (r) =>
+        r.basicInfo.masterId != null &&
+        r.basicInfo.originalYear == null &&
+        !r.basicInfo.originalYearUnknown,
+    );
   }
 
   /**

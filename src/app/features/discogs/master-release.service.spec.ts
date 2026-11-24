@@ -4,7 +4,6 @@ import { of, throwError, NEVER } from 'rxjs';
 import { MasterReleaseService } from './master-release.service';
 import { DatabaseService } from '../../core/database.service';
 import { CredentialsService } from '../../core/credentials.service';
-import { CatalogService } from '../../core/catalog.service';
 import { Release } from '../../shared/models/release.model';
 import { DISCOGS_API_DELAY_MS } from '../../shared/constants/timing.constants';
 
@@ -16,7 +15,7 @@ describe('MasterReleaseService', () => {
 
   const createService = createServiceFactory({
     service: MasterReleaseService,
-    mocks: [HttpClient, DatabaseService, CatalogService],
+    mocks: [HttpClient, DatabaseService],
     providers: [
       {
         provide: CredentialsService,
@@ -724,10 +723,9 @@ describe('MasterReleaseService', () => {
       });
     });
 
-    it('persists enriched detail metadata and the completion marker', async () => {
+    it('saves enriched detail metadata and the completion marker in this browser', async () => {
       const db = spectator.inject(DatabaseService);
       const http = spectator.inject(HttpClient);
-      const catalog = spectator.inject(CatalogService);
       const enrichedRelease = {
         ...mockReleaseNeedingData,
         basicInfo: {
@@ -747,18 +745,14 @@ describe('MasterReleaseService', () => {
       await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS);
       await request;
 
-      expect(catalog.writeEnrichment).toHaveBeenCalledWith(
-        123,
-        expect.objectContaining({
+      expect(db.updateRelease).toHaveBeenCalledWith(123, {
+        basicInfo: expect.objectContaining({
           detailsFetched: true,
           trackCount: 1,
           tracklist: [{ position: 'A1', title: 'Track' }],
-          label: 'Atlantic',
-          originalYear: 1968,
           masterId: 1000,
-          year: 2020,
         }),
-      );
+      });
     });
 
     it('does not estimate runtime when any track duration is missing', async () => {
@@ -874,7 +868,6 @@ describe('MasterReleaseService', () => {
     it('keeps completed writes when a later release fails', async () => {
       const db = spectator.inject(DatabaseService);
       const http = spectator.inject(HttpClient);
-      const catalog = spectator.inject(CatalogService);
       const secondRelease = { ...mockReleaseNeedingData, id: 124, instanceId: 457 };
       db.getAllReleases.mockResolvedValue([mockReleaseNeedingData, secondRelease]);
       db.updateRelease.mockResolvedValue(1);
@@ -895,11 +888,10 @@ describe('MasterReleaseService', () => {
       await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS * 20);
       await queue;
 
-      expect(catalog.writeEnrichment).toHaveBeenCalledWith(
-        123,
-        expect.objectContaining({ detailsFetched: true, trackCount: 1 }),
-      );
-      expect(catalog.writeEnrichment).toHaveBeenCalledTimes(1);
+      expect(db.updateRelease).toHaveBeenCalledWith(123, {
+        basicInfo: expect.objectContaining({ detailsFetched: true, trackCount: 1 }),
+      });
+      expect(db.updateRelease).not.toHaveBeenCalledWith(124, expect.anything());
     });
 
     it('starts the detail queue when the existing background sync entry point runs', async () => {

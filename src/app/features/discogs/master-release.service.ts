@@ -1,10 +1,10 @@
-import { Injectable, signal, computed, Optional } from '@angular/core';
+import { Injectable, signal, computed } from '@angular/core';
 import { HttpHeaders } from '@angular/common/http';
 import { Subject } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { DatabaseService } from '../../core/database.service';
 import { CredentialsService } from '../../core/credentials.service';
-import { Release, ReleaseEnrichment, ReleaseTrack } from '../../shared/models/release.model';
+import { Release, ReleaseTrack } from '../../shared/models/release.model';
 import {
   DiscogsMasterRelease,
   DiscogsMasterVersionsResponse,
@@ -14,7 +14,6 @@ import {
 import { DISCOGS_API_DELAY_MS } from '../../shared/constants/timing.constants';
 import { DiscogsRequestScheduler } from './discogs-request-scheduler.service';
 import { MusicBrainzRequestScheduler } from './musicbrainz-request-scheduler.service';
-import { CatalogService } from '../../core/catalog.service';
 
 export interface MasterFetchProgress {
   total: number;
@@ -84,7 +83,6 @@ export class MasterReleaseService {
     private credentialsService: CredentialsService,
     private requestScheduler: DiscogsRequestScheduler,
     private musicBrainzScheduler: MusicBrainzRequestScheduler,
-    @Optional() private catalogService?: CatalogService,
   ) {}
 
   private get token(): string {
@@ -147,6 +145,7 @@ export class MasterReleaseService {
 
   async resolveOriginalYear(release: Release): Promise<OriginalYearResolution> {
     if (release.basicInfo.originalYear != null) return 'known';
+    if (release.basicInfo.originalYearUnknown) return 'unknown';
 
     const request = this.resolutionRequests.get(release.id);
     if (request) return request;
@@ -371,7 +370,6 @@ export class MasterReleaseService {
     await this.db.updateRelease(release.id, {
       basicInfo: { ...basicInfo, ...(masterId ? { masterId } : {}), originalYear: year },
     });
-    await this.persistEnrichment(release.id);
   }
 
   private async updateReleaseDetails(
@@ -410,7 +408,6 @@ export class MasterReleaseService {
         : {}),
     });
     await this.db.updateRelease(release.id, { basicInfo });
-    await this.persistEnrichment(release.id);
   }
 
   private async fetchAndPersistReleaseMetadata(release: Release): Promise<boolean> {
@@ -422,42 +419,6 @@ export class MasterReleaseService {
       details.master_id ?? release.basicInfo.masterId,
     );
     return true;
-  }
-
-  private async persistEnrichment(releaseId: number): Promise<void> {
-    if (!this.catalogService) return;
-    try {
-      const release = await this.db.getRelease(releaseId);
-      if (release) {
-        const {
-          masterId,
-          originalYear,
-          year,
-          label,
-          catalogNumber,
-          format,
-          tracklist,
-          detailsFetched,
-          trackCount,
-          totalRuntimeSeconds,
-        } = release.basicInfo;
-        const enrichment: ReleaseEnrichment = {
-          ...(masterId !== undefined ? { masterId } : {}),
-          ...(originalYear !== undefined ? { originalYear } : {}),
-          ...(year !== undefined ? { year } : {}),
-          ...(label !== undefined ? { label } : {}),
-          ...(catalogNumber !== undefined ? { catalogNumber } : {}),
-          ...(format !== undefined ? { format } : {}),
-          ...(tracklist !== undefined ? { tracklist } : {}),
-          ...(detailsFetched !== undefined ? { detailsFetched } : {}),
-          ...(trackCount !== undefined ? { trackCount } : {}),
-          ...(totalRuntimeSeconds !== undefined ? { totalRuntimeSeconds } : {}),
-        };
-        await this.catalogService.writeEnrichment(releaseId, enrichment);
-      }
-    } catch (error) {
-      console.error('Failed to persist enriched catalog:', error);
-    }
   }
 
   private async fetchEarliestMasterReleaseYear(masterId: number): Promise<number | undefined> {

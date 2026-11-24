@@ -1,8 +1,10 @@
 /**
- * Checks every artist in the Discogs collection for official vinyl albums and writes the
- * results to DATA_DIR (summary.json plus one progress file per artist). Runs in GitHub
+ * Saves everything the site shows to DATA_DIR, so browsers never wait on Discogs: the
+ * catalog with record details (catalog.json), each artist's official vinyl albums
+ * (summary.json plus one progress file per artist) and the pressings of every missing album
+ * (pressings/). The owner's wantlist is saved to the owner-data branch. Runs in GitHub
  * Actions; the workflow publishes DATA_DIR to the missing-albums-data branch, which the
- * site reads. Progress is saved after every artist, so a run can stop at any point.
+ * site reads. Progress is saved as it goes, so a run can stop at any point.
  */
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -14,16 +16,36 @@ import {
   type DiscogsArtistReleasesPage,
   type DiscogsMasterVersionsPage,
 } from '../api/missing-albums.js';
+import type { DiscogsCollectionItem } from '../api/_catalog-format.js';
+import {
+  readOwnerFile,
+  sortedIds,
+  updateOwnerFile,
+  type HiddenAlbumsFile,
+  type WantlistFile,
+} from '../api/_owner-data.js';
+import { buildCatalog, needsLookup, type CatalogFile } from './catalog-refresh.js';
+import {
+  pressingsFileName,
+  pressingsOrder,
+  refreshPressings,
+  type PressingsFile,
+  type WantedAlbum,
+} from './pressings-refresh.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-// The workflow runs Mondays and Thursdays; anything checked on the previous run is due again.
-// Each recheck lists the discography again to find titles added since.
-const CHECK_INTERVAL_MS = 2 * DAY_MS;
+// The workflow runs daily for collection and wantlist changes; discographies are listed
+// again about twice a week to find titles added since.
+const CHECK_INTERVAL_MS = 3 * DAY_MS - 2 * 60 * 60 * 1000;
 // Titles that had no vinyl album are only looked at again this often, for new reissues.
 const FULL_CHECK_INTERVAL_MS = 180 * DAY_MS;
 const VARIOUS_ARTISTS_ID = 194;
-// Leaves part of the shared Discogs rate limit for the site while this runs.
-const MIN_REQUEST_GAP_MS = 1_500;
+// Leaves part of the shared Discogs rate limit for the owner's changes on the site.
+const MIN_REQUEST_GAP_MS = 1_250;
+// MusicBrainz asks for at most one request per second.
+const MUSICBRAINZ_GAP_MS = 1_100;
+const MUSICBRAINZ_URL = 'https://musicbrainz.org/ws/2/release-group/';
+const USER_AGENT = 'VinylArchive/1.0 (https://records.psamera.com)';
 const SAVE_EVERY_REQUESTS = 50;
 
 export interface ArtistCredit {
@@ -71,7 +93,12 @@ export interface MissingAlbumsSummary {
 
 interface CollectionPage {
   pagination: { pages: number };
-  releases: Array<{ basic_information: { artists: ArtistCredit[]; master_id?: number } }>;
+  releases: DiscogsCollectionItem[];
+}
+
+interface WantsPage {
+  pagination: { pages: number };
+  wants: Array<{ id: number }>;
 }
 
 /** Matches how the site keys an artist credit: every credited name, joined by "|". */
@@ -193,6 +220,7 @@ export function knownVerdict(
 
 class Refresher {
   private lastRequestAt = 0;
+  private lastMusicBrainzAt = 0;
   private requestsSinceSave = 0;
 
   constructor(
@@ -213,21 +241,50 @@ class Refresher {
     return discogsGet<T>(pathname, this.token, params);
   }
 
-  async collection(
-    username: string,
-  ): Promise<{ credits: ArtistCredit[][]; ownedMasters: Set<number> }> {
-    const credits: ArtistCredit[][] = [];
-    const ownedMasters = new Set<number>();
+  async musicBrainz<T>(query: string): Promise<T> {
+    const wait = this.lastMusicBrainzAt + MUSICBRAINZ_GAP_MS - Date.now();
+    if (wait > 0) await sleep(wait);
+    this.lastMusicBrainzAt = Date.now();
+    const url = new URL(MUSICBRAINZ_URL);
+    url.search = new URLSearchParams({ query, fmt: 'json', limit: '20' }).toString();
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error(`MusicBrainz request failed with ${response.status}`);
+    return (await response.json()) as T;
+  }
+
+  async collection(username: string): Promise<{
+    items: DiscogsCollectionItem[];
+    credits: ArtistCredit[][];
+    ownedMasters: Set<number>;
+  }> {
+    const items: DiscogsCollectionItem[] = [];
     for (let page = 1; ; page++) {
       const data = await this.get<CollectionPage>(
         `/users/${encodeURIComponent(username)}/collection/folders/0/releases`,
         { per_page: '100', page: String(page) },
       );
-      for (const { basic_information: info } of data.releases) {
-        credits.push(info.artists);
-        if (info.master_id) ownedMasters.add(info.master_id);
-      }
-      if (page >= data.pagination.pages) return { credits, ownedMasters };
+      items.push(...data.releases);
+      if (page >= data.pagination.pages) break;
+    }
+    const credits = items.map((item) => item.basic_information.artists as ArtistCredit[]);
+    const ownedMasters = new Set(
+      items.map((item) => item.basic_information.master_id).filter((id): id is number => !!id),
+    );
+    return { items, credits, ownedMasters };
+  }
+
+  async wantlist(username: string): Promise<number[]> {
+    const ids: number[] = [];
+    for (let page = 1; ; page++) {
+      const data = await this.get<WantsPage>(`/users/${encodeURIComponent(username)}/wants`, {
+        per_page: '100',
+        page: String(page),
+      });
+      ids.push(...data.wants.map((want) => want.id));
+      if (page >= data.pagination.pages) return sortedIds(ids);
     }
   }
 
@@ -338,6 +395,69 @@ async function pruneDocuments(dataDir: string, artists: Map<string, ArtistCredit
   }
 }
 
+/**
+ * Albums that show as missing on the site (from finished checks, or the previous results
+ * while a recheck runs), skipping owned ones. Hidden albums are left out by the caller.
+ */
+export function missingAlbums(
+  documents: Map<string, ArtistDocument>,
+  ownedMasters: Set<number>,
+): WantedAlbum[] {
+  const albums = new Map<number, WantedAlbum>();
+  for (const document of documents.values()) {
+    const shown = document.complete ? document.albums : (document.previousAlbums ?? []);
+    for (const album of shown) {
+      if (!ownedMasters.has(album.masterId)) {
+        albums.set(album.masterId, { masterId: album.masterId, year: album.year });
+      }
+    }
+  }
+  return [...albums.values()];
+}
+
+async function readJson<T>(file: string): Promise<T | null> {
+  try {
+    return JSON.parse(await readFile(file, 'utf8')) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function readPressings(dir: string): Promise<Map<number, PressingsFile>> {
+  const files = new Map<number, PressingsFile>();
+  for (const name of await readdir(dir)) {
+    const masterId = Number(name.match(/^master-(\d+)\.json$/)?.[1]);
+    const file =
+      Number.isInteger(masterId) && (await readJson<PressingsFile>(path.join(dir, name)));
+    if (file) files.set(masterId, file);
+  }
+  return files;
+}
+
+/** Keeps the saved wantlist on the owner-data branch in step with Discogs. */
+async function syncWantlist(refresher: Refresher, username: string): Promise<void> {
+  const githubToken = process.env['GITHUB_TOKEN']?.trim();
+  if (!githubToken) return;
+  try {
+    const releaseIds = await refresher.wantlist(username);
+    await updateOwnerFile<WantlistFile>(
+      'wantlist.json',
+      githubToken,
+      () => ({ releaseIds }),
+      'Update the saved wantlist from Discogs',
+    );
+  } catch (error) {
+    console.warn('Wantlist was not saved this run:', error);
+  }
+}
+
+async function hiddenAlbums(): Promise<Set<number>> {
+  const githubToken = process.env['GITHUB_TOKEN']?.trim();
+  if (!githubToken) return new Set();
+  const file = await readOwnerFile<HiddenAlbumsFile>('hidden-albums.json', githubToken);
+  return new Set(file?.masterIds ?? []);
+}
+
 async function main(): Promise<void> {
   const token = process.env['DISCOGS_TOKEN']?.trim();
   const username = process.env['DISCOGS_USERNAME']?.trim();
@@ -345,9 +465,29 @@ async function main(): Promise<void> {
   const minutes = Number(process.env['TIME_BUDGET_MINUTES'] ?? 20);
   if (!token || !username) throw new Error('DISCOGS_TOKEN and DISCOGS_USERNAME are required');
 
+  const pressingsDir = path.join(dataDir, 'pressings');
   await mkdir(path.join(dataDir, 'artists'), { recursive: true });
+  await mkdir(pressingsDir, { recursive: true });
   const refresher = new Refresher(token, dataDir, Date.now() + minutes * 60_000);
-  const { credits, ownedMasters } = await refresher.collection(username);
+  const timeLeft = () => refresher.timeLeft();
+  const { items, credits, ownedMasters } = await refresher.collection(username);
+
+  const catalogFile = path.join(dataDir, 'catalog.json');
+  const previousCatalog = await readJson<CatalogFile>(catalogFile);
+  const catalogBefore = previousCatalog?.releases.filter(needsLookup).length ?? items.length;
+  const catalog = await buildCatalog(
+    items,
+    previousCatalog,
+    (pathname, params) => refresher.get(pathname, params),
+    (query) => refresher.musicBrainz(query),
+    timeLeft,
+  );
+  await writeIfChanged(catalogFile, JSON.stringify(catalog));
+  const catalogRemaining = catalog.releases.filter(needsLookup).length;
+  console.log(`Catalog: ${catalog.releases.length} copies, ${catalogRemaining} still need details`);
+
+  await syncWantlist(refresher, username);
+
   const artists = collectionArtists(credits);
   const documents = await readDocuments(dataDir, artists);
   const progressBefore = totalProgress(documents);
@@ -375,10 +515,49 @@ async function main(): Promise<void> {
     path.join(dataDir, 'summary.json'),
     JSON.stringify(buildSummary(artists, documents)),
   );
-  const remaining = refreshOrder(artists, documents).length;
-  // With nothing gained this run, the artists left keep failing; don't keep retrying them.
-  const progressed = totalProgress(documents) > progressBefore;
-  console.log(`Remaining artists: ${remaining}; progressed: ${progressed}`);
+
+  const missing = missingAlbums(documents, ownedMasters);
+  const hidden = await hiddenAlbums();
+  const wanted = missing.filter((album) => !hidden.has(album.masterId));
+  const pressings = await readPressings(pressingsDir);
+  let pressingsProgress = 0;
+  for (const album of pressingsOrder(wanted, pressings)) {
+    if (!refresher.timeLeft()) break;
+    const before = pressings.get(album.masterId);
+    const beforeState = `${before?.cachedAt}:${before?.next}`;
+    try {
+      const file = await refreshPressings(
+        album.masterId,
+        before,
+        refresher.get.bind(refresher),
+        timeLeft,
+        (saved) =>
+          writeFile(
+            path.join(pressingsDir, pressingsFileName(album.masterId)),
+            JSON.stringify(saved),
+          ),
+      );
+      pressings.set(album.masterId, file);
+      if (`${file.cachedAt}:${file.next}` !== beforeState) pressingsProgress++;
+    } catch (error) {
+      console.warn(`Pressings for master ${album.masterId} are left for the next run:`, error);
+    }
+  }
+  // Hidden albums keep their saved pressings in case they're unhidden.
+  const keep = new Set(missing.map((album) => pressingsFileName(album.masterId)));
+  for (const name of await readdir(pressingsDir)) {
+    if (!keep.has(name)) await rm(path.join(pressingsDir, name));
+  }
+  const pressingsRemaining = pressingsOrder(wanted, pressings).length;
+  console.log(`Pressings: ${wanted.length - pressingsRemaining} of ${wanted.length} albums saved`);
+
+  const remaining = refreshOrder(artists, documents).length + pressingsRemaining + catalogRemaining;
+  // With nothing gained this run, what's left keeps failing; don't keep retrying it.
+  const progressed =
+    totalProgress(documents) > progressBefore ||
+    pressingsProgress > 0 ||
+    catalogRemaining < catalogBefore;
+  console.log(`Remaining: ${remaining}; progressed: ${progressed}`);
   if (process.env['GITHUB_OUTPUT']) {
     await writeFile(
       process.env['GITHUB_OUTPUT'],

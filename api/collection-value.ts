@@ -1,4 +1,4 @@
-import { hasOwnerKey } from './wantlist.js';
+import { hasOwnerKey } from './_owner-auth.js';
 
 const DISCOGS_API_URL = 'https://api.discogs.com';
 const DISCOGS_USER_AGENT = 'VinylArchive/1.0';

@@ -1,4 +1,5 @@
 import { Injectable } from '@angular/core';
+import { SAVED_DATA_URL, fetchSaved } from '../../core/saved-data';
 
 export interface MissingAlbum {
   masterId: number;
@@ -44,9 +45,7 @@ export function artistCreditKey(artists: string[]): string {
   return artists.join('|');
 }
 
-/** Published by the missing albums GitHub workflow (.github/workflows/missing-albums-refresh.yml). */
-const SUMMARY_URL =
-  'https://raw.githubusercontent.com/cadmanc/vinyl-archive/missing-albums-data/summary.json';
+const SUMMARY_URL = `${SAVED_DATA_URL}/summary.json`;
 const PRESSINGS_STORAGE_PREFIX = 'missing-albums-pressings:';
 const PRESSINGS_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 // A master with hundreds of pressings needs several batches; this stops a runaway loop.
@@ -69,8 +68,15 @@ export class MissingAlbumsService {
     return (await response.json()) as MissingAlbumsSummary;
   }
 
-  /** Pressings are saved in this browser, so an album only waits on Discogs the first time. */
+  /**
+   * Pressings come from the copy the scheduled job saves on GitHub. Until the job reaches an
+   * album, they're looked up once and kept in this browser.
+   */
   async loadPressings(masterId: number): Promise<VinylPressing[]> {
+    const published = await fetchSaved<{ next: number | null; pressings: VinylPressing[] }>(
+      `${SAVED_DATA_URL}/pressings/master-${masterId}.json`,
+    ).catch(() => null);
+    if (published && published.next === null) return published.pressings;
     const saved = this.savedPressings(masterId);
     if (saved) return saved;
 

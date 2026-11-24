@@ -289,8 +289,9 @@ export class CollectionComponent implements OnInit, OnDestroy {
     this.openHiddenLists.update((current) => toggled(current, group.key));
   }
 
-  hideAlbum(masterId: number): void {
-    this.hiddenAlbums.hide(masterId);
+  async hideAlbum(masterId: number): Promise<void> {
+    await this.hiddenAlbums.hide(masterId);
+    if (!this.hiddenAlbums.isHidden(masterId)) return;
     this.expandedAlbums.update((current) => {
       const next = new Set(current);
       next.delete(masterId);
@@ -363,7 +364,11 @@ export class CollectionComponent implements OnInit, OnDestroy {
   private async loadMissingAlbumsSummary(): Promise<void> {
     this.summaryStatus.set('loading');
     try {
-      const summary = await this.missingAlbumsService.loadSummary();
+      // Counts leave out hidden albums, so both arrive before anything is shown.
+      const [summary] = await Promise.all([
+        this.missingAlbumsService.loadSummary(),
+        this.hiddenAlbums.load(),
+      ]);
       this.artistAlbums.update((current) => {
         const next = { ...current };
         for (const [key, entry] of Object.entries(summary.artists)) {
@@ -485,13 +490,14 @@ export class CollectionComponent implements OnInit, OnDestroy {
   private markUnresolvedReleasesAsFetching(releases: Release[]): void {
     const states: Record<number, ResolutionState> = {};
     for (const release of releases) {
-      if (release.basicInfo.originalYear == null) states[release.id] = 'fetching';
+      if (release.basicInfo.originalYear != null) continue;
+      states[release.id] = release.basicInfo.originalYearUnknown ? 'unknown' : 'fetching';
     }
     this.resolutionStates.set(states);
   }
 
   private async resolveIfNeeded(release: Release): Promise<void> {
-    if (release.basicInfo.originalYear != null) return;
+    if (release.basicInfo.originalYear != null || release.basicInfo.originalYearUnknown) return;
 
     const result = await this.masterReleaseService.resolveOriginalYear(release);
     const updated = await this.db.getRelease(release.id);

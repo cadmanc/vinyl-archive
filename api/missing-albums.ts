@@ -48,7 +48,7 @@ export interface DiscogsMasterVersionsPage {
   versions: DiscogsMasterVersion[];
 }
 
-interface DiscogsReleaseDetail {
+export interface DiscogsReleaseDetail {
   formats?: Array<{ name: string; qty?: string; descriptions?: string[]; text?: string }>;
 }
 

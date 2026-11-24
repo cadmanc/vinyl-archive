@@ -1,6 +1,7 @@
 import {
   buildSummary,
   knownVerdict,
+  missingAlbums,
   catalogKey,
   collectionArtists,
   refreshOrder,
@@ -164,5 +165,36 @@ describe('totalProgress', () => {
     const before = totalProgress(new Map([['Nirvana', document()]]));
     const after = totalProgress(new Map([['Nirvana', document({ checked: 2, complete: true })]]));
     expect(after - before).toBe(2);
+  });
+});
+
+describe('missingAlbums', () => {
+  it('lists unowned albums, using earlier results while a recheck runs', () => {
+    const documents = new Map<string, ArtistDocument>([
+      [
+        'Nirvana',
+        document({
+          complete: true,
+          albums: [
+            { masterId: 1, title: 'Bleach', year: 1989 },
+            { masterId: 2, title: 'Nevermind', year: 1991 },
+          ],
+        }),
+      ],
+      [
+        'BadBadNotGood|Ghostface Killah',
+        document({
+          artists: sourSoul,
+          complete: false,
+          albums: [],
+          previousAlbums: [{ masterId: 3, title: 'Sour Soul', year: 2015 }],
+        }),
+      ],
+    ]);
+
+    expect(missingAlbums(documents, new Set([2]))).toEqual([
+      { masterId: 1, year: 1989 },
+      { masterId: 3, year: 2015 },
+    ]);
   });
 });

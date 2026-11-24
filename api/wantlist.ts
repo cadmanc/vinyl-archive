@@ -1,8 +1,8 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { hasOwnerKey } from './_owner-auth.js';
+import { sortedIds, updateOwnerFile, type WantlistFile } from './_owner-data.js';
 
 const DISCOGS_API_URL = 'https://api.discogs.com';
 const DISCOGS_USER_AGENT = 'VinylArchive/1.0';
-const MAX_PAGES = 20;
 
 type VercelRequest = {
   method?: string;
@@ -16,74 +16,23 @@ type VercelResponse = {
   json: (body: unknown) => VercelResponse;
 };
 
-interface WantsPage {
-  pagination: { pages: number };
-  wants: Array<{ id: number }>;
-}
-
-function header(req: VercelRequest, name: string): string | undefined {
-  const value = req.headers[name];
-  return Array.isArray(value) ? value[0] : value;
-}
-
-function digest(value: string): Buffer {
-  return createHash('sha256').update(value).digest();
-}
-
-/** Anyone can see the wantlist, but only requests carrying the owner's key may change it. */
-export function hasOwnerKey(req: VercelRequest, ownerKey: string): boolean {
-  const provided = header(req, 'x-owner-key');
-  if (!provided) return false;
-  return timingSafeEqual(digest(provided), digest(ownerKey));
-}
-
-async function discogs(path: string, token: string, init: RequestInit = {}): Promise<Response> {
-  return fetch(new URL(path, DISCOGS_API_URL), {
-    ...init,
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': DISCOGS_USER_AGENT,
-      Authorization: `Discogs token=${token}`,
-    },
-  });
-}
-
-async function wantedReleaseIds(username: string, token: string): Promise<number[]> {
-  const ids: number[] = [];
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const response = await discogs(
-      `/users/${encodeURIComponent(username)}/wants?per_page=100&page=${page}`,
-      token,
-    );
-    if (!response.ok) throw new Error(`Discogs wantlist request failed with ${response.status}`);
-    const data = (await response.json()) as WantsPage;
-    ids.push(...data.wants.map((want) => want.id));
-    if (page >= data.pagination.pages) break;
-  }
-  return ids;
-}
-
+/**
+ * Adds or removes a pressing on the owner's Discogs wantlist, then updates the saved copy
+ * on GitHub that the site reads. Changes made on Discogs itself arrive with the daily job.
+ */
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   const username = process.env.DISCOGS_USERNAME?.trim();
   const token = process.env.DISCOGS_TOKEN?.trim();
   const ownerKey = process.env.WANTLIST_OWNER_KEY?.trim();
+  const githubToken = process.env.GITHUB_DATA_TOKEN?.trim();
   if (!username || !token || !ownerKey) {
     res.status(503).json({ error: 'Discogs server configuration is unavailable' });
     return;
   }
   res.setHeader('Cache-Control', 'no-store');
 
-  if (req.method === 'GET') {
-    try {
-      res.status(200).json({ releaseIds: await wantedReleaseIds(username, token) });
-    } catch {
-      res.status(502).json({ error: 'Discogs wantlist could not be read' });
-    }
-    return;
-  }
-
   if (req.method !== 'PUT' && req.method !== 'DELETE') {
-    res.setHeader('Allow', 'GET, PUT, DELETE').status(405).json({ error: 'Method not allowed' });
+    res.setHeader('Allow', 'PUT, DELETE').status(405).json({ error: 'Method not allowed' });
     return;
   }
   if (!hasOwnerKey(req, ownerKey)) {
@@ -97,18 +46,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     res.status(400).json({ error: 'A releaseId is required' });
     return;
   }
+  const wanted = req.method === 'PUT';
 
   try {
-    const response = await discogs(
-      `/users/${encodeURIComponent(username)}/wants/${releaseId}`,
-      token,
-      { method: req.method },
+    const response = await fetch(
+      new URL(`/users/${encodeURIComponent(username)}/wants/${releaseId}`, DISCOGS_API_URL),
+      {
+        method: req.method,
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': DISCOGS_USER_AGENT,
+          Authorization: `Discogs token=${token}`,
+        },
+      },
     );
     // Removing something already gone, or adding something already there, is fine.
-    const settled = response.ok || (req.method === 'DELETE' && response.status === 404);
+    const settled = response.ok || (!wanted && response.status === 404);
     if (!settled) throw new Error(`Discogs wantlist update failed with ${response.status}`);
-    res.status(200).json({ releaseId, wanted: req.method === 'PUT' });
   } catch {
     res.status(502).json({ error: 'Discogs wantlist could not be updated' });
+    return;
   }
+
+  if (githubToken) {
+    try {
+      await updateOwnerFile<WantlistFile>(
+        'wantlist.json',
+        githubToken,
+        (current) => {
+          const ids = new Set(current?.releaseIds ?? []);
+          if (wanted) ids.add(releaseId);
+          else ids.delete(releaseId);
+          return { releaseIds: sortedIds(ids) };
+        },
+        `${wanted ? 'Want' : 'Unwant'} release ${releaseId}`,
+      );
+    } catch (error) {
+      // Discogs has the change; the daily job brings the saved copy up to date.
+      console.error('Saved wantlist could not be updated:', error);
+    }
+  }
+  res.status(200).json({ releaseId, wanted });
 }

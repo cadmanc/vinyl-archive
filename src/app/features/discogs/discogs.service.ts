@@ -90,7 +90,6 @@ export class DiscogsService {
       }
 
       await this.db.removeReleasesNotIn(new Set(copiesById.keys()));
-      await this.persistCatalog();
 
       await this.db.setLastSyncDate(new Date());
       const finalCount = await this.db.getCollectionCount();
@@ -221,15 +220,6 @@ export class DiscogsService {
         // New release, add with default tracking values
         await this.db.addRelease(release);
       }
-    }
-  }
-
-  private async persistCatalog(): Promise<void> {
-    if (!this.catalogService) return;
-    try {
-      await this.catalogService.write();
-    } catch (error) {
-      console.error('Failed to persist server catalog:', error);
     }
   }
 }

@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
-import type { Release, ReleaseEnrichment } from '../shared/models/release.model';
+import type { Release } from '../shared/models/release.model';
+import { SAVED_DATA_URL, fetchSaved } from './saved-data';
 
 if (typeof globalThis.fetch !== 'function') {
   globalThis.fetch = (() => Promise.reject(new Error('fetch is unavailable'))) as typeof fetch;
@@ -32,13 +33,19 @@ export function groupCatalogCopies(
   return [...grouped.values()];
 }
 
+/** Saved on GitHub by the scheduled refresh workflow, with every record's details. */
+const SAVED_CATALOG_URL = `${SAVED_DATA_URL}/catalog.json`;
+
 @Injectable({ providedIn: 'root' })
 export class CatalogService {
-  private enrichmentWriteQueue = Promise.resolve();
-
-  constructor() {}
-
+  /** The saved catalog, or the site's live Discogs copy before the first saved one exists. */
   async load(): Promise<CatalogDocument | null> {
+    try {
+      const saved = await fetchSaved<CatalogDocument>(SAVED_CATALOG_URL);
+      if (saved?.releases.length) return saved;
+    } catch (error) {
+      console.error('Failed to load the saved catalog:', error);
+    }
     try {
       const response = await fetch('/api/catalog');
       if (!response.ok) return null;
@@ -47,25 +54,5 @@ export class CatalogService {
       console.error('Failed to load server catalog:', error);
       return null;
     }
-  }
-
-  async write(): Promise<void> {
-    const response = await fetch('/api/catalog-sync', {
-      method: 'POST',
-    });
-    if (!response.ok) throw new Error('Catalog could not be written');
-  }
-
-  async writeEnrichment(releaseId: number, enrichment: ReleaseEnrichment): Promise<void> {
-    const write = this.enrichmentWriteQueue.then(async () => {
-      const response = await fetch('/api/catalog-sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ releaseId, enrichment }),
-      });
-      if (!response.ok) throw new Error('Catalog enrichment could not be written');
-    });
-    this.enrichmentWriteQueue = write.catch(() => undefined);
-    return write;
   }
 }

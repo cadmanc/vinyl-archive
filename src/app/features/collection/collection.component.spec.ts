@@ -190,13 +190,13 @@ describe('CollectionComponent hidden missing albums', () => {
       },
     } as any);
 
-    component.hideAlbum(11);
+    hidden.hidden.set(new Set([11]));
 
     expect(component.missingAlbums(group).map((album) => album.masterId)).toEqual([10]);
     expect(component.hiddenMissingAlbums(group).map((album) => album.masterId)).toEqual([11]);
     expect(component.missingSummary(group)).toBe('1 Album, 1 Missing');
 
-    hidden.unhide(11);
+    hidden.hidden.set(new Set());
     expect(component.missingAlbums(group)).toHaveLength(2);
   });
 });

@@ -29,6 +29,7 @@ export interface Release {
     year?: number;
     masterId?: number; // Discogs master release ID
     originalYear?: number; // Original release year from master
+    originalYearUnknown?: boolean; // Every source was checked and none has the original year
     formats: string[];
     discCount?: number; // sum of formats[].qty; undefined until re-synced from Discogs
     trackCount?: number;
