@@ -38,16 +38,16 @@
 
   <header class="collection-header">
     <div>
-      <p class="eyebrow">{{ currentTime() }}</p>
       <h1>The Archive</h1>
       <span class="record-count">
         @if (hasActiveFilters()) {
           <strong>{{ filteredCopies() }} of {{ totalCopies() }} records</strong>
+          · {{ currentTime() }}
           <button type="button" class="clear-filters" (click)="clearFilters()">
             Clear filters
           </button>
         } @else {
-          <strong>{{ totalCopies() }} records</strong>
+          <strong>{{ totalCopies() }} records</strong> · {{ currentTime() }}
         }
       </span>
       @if (overview(); as totals) {
