@@ -358,6 +358,14 @@ export class CollectionComponent implements OnInit, OnDestroy {
     return state?.status === 'ready' ? state.value : [];
   }
 
+  /** True when this missing album has at least one pressing on the wantlist. */
+  hasWantedPressing(masterId: number): boolean {
+    if (this.wantlist.isWantedMaster(masterId)) return true;
+    return this.readyPressings(masterId).some((pressing) =>
+      this.wantlist.isWanted(pressing.releaseId),
+    );
+  }
+
   toggleAlbum(masterId: number): void {
     this.expandedAlbums.update((current) => toggled(current, masterId));
     if (this.isAlbumExpanded(masterId)) void this.wantlist.load();

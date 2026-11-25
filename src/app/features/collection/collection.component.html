@@ -166,7 +166,7 @@
                               }
                               <span class="missing-album-year">
                                 {{ album.year || '' }}
-                                @if (wantlist.isWantedMaster(album.masterId)) {
+                                @if (hasWantedPressing(album.masterId)) {
                                   <span
                                     class="want-dot"
                                     title="At least one pressing is on the wantlist"
@@ -220,7 +220,9 @@
                                               ? 'On your Discogs wantlist. Click to remove it.'
                                               : 'Add to your Discogs wantlist'
                                           "
-                                          (click)="wantlist.toggle(pressing.releaseId)"
+                                          (click)="
+                                            wantlist.toggle(pressing.releaseId, album.masterId)
+                                          "
                                         >
                                           {{
                                             wantlist.isWanted(pressing.releaseId)
@@ -295,7 +297,7 @@
                                 </button>
                                 <span class="missing-album-year">
                                   {{ album.year || '' }}
-                                  @if (wantlist.isWantedMaster(album.masterId)) {
+                                  @if (hasWantedPressing(album.masterId)) {
                                     <span
                                       class="want-dot"
                                       title="At least one pressing is on the wantlist"
