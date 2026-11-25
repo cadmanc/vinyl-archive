@@ -42,17 +42,17 @@
       <h1>The Archive</h1>
       <span class="record-count">
         @if (hasActiveFilters()) {
-          {{ filteredCopies() }} of {{ totalCopies() }} records
+          <strong>{{ filteredCopies() }} of {{ totalCopies() }} records</strong>
           <button type="button" class="clear-filters" (click)="clearFilters()">
             Clear filters
           </button>
         } @else {
-          {{ totalCopies() }} records
+          <strong>{{ totalCopies() }} records</strong>
         }
       </span>
       @if (overview(); as totals) {
         <span class="record-count">
-          {{ totals.artists }} artists · {{ totals.missing }} albums missing
+          <strong>{{ totals.artists }} artists</strong> · {{ totals.missing }} albums missing
           <button type="button" class="clear-filters" (click)="toggleOnlyMissing()">
             {{ onlyMissing() ? 'Show all artists' : 'Show only artists with missing albums' }}
           </button>
@@ -60,7 +60,8 @@
       }
       @if (collectionValue.value(); as value) {
         <span class="record-count" title="Discogs' estimate from recent marketplace sales">
-          Estimated value: {{ value.low }} low · {{ value.typical }} typical · {{ value.high }} high
+          Estimated value:
+          <strong>{{ value.low }} low · {{ value.typical }} typical · {{ value.high }} high</strong>
         </span>
       }
     </div>
