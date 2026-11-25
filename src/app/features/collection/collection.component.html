@@ -53,9 +53,6 @@
       @if (overview(); as totals) {
         <span class="record-count">
           <strong>{{ totals.artists }} artists</strong> · {{ totals.missing }} albums missing
-          <button type="button" class="clear-filters" (click)="toggleOnlyMissing()">
-            {{ onlyMissing() ? 'Show all artists' : 'Show only artists with missing albums' }}
-          </button>
         </span>
       }
       @if (collectionValue.value(); as value) {

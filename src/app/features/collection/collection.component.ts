@@ -117,14 +117,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
     this.filterService.filters();
     return this.releases().filter((release) => this.filterService.matchesFilters(release));
   });
-  onlyMissing = signal(false);
-  groups = computed(() => {
-    const groups = groupCollection(this.filteredReleases());
-    if (!this.onlyMissing()) return groups;
-    return groups.filter(
-      (group) => this.supportsMissingAlbums(group) && this.missingAlbums(group).length > 0,
-    );
-  });
+  groups = computed(() => groupCollection(this.filteredReleases()));
   /** Totals across the whole collection, shown once the missing albums summary has loaded. */
   overview = computed(() => {
     if (this.summaryStatus() !== 'ready') return null;
@@ -338,10 +331,6 @@ export class CollectionComponent implements OnInit, OnDestroy {
   readyPressings(masterId: number): VinylPressing[] {
     const state = this.albumPressings()[masterId];
     return state?.status === 'ready' ? state.value : [];
-  }
-
-  toggleOnlyMissing(): void {
-    this.onlyMissing.update((value) => !value);
   }
 
   toggleAlbum(masterId: number): void {
