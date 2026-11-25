@@ -40,11 +40,13 @@
 
 @mixin btn-primary {
   @include btn-base;
-  background: $gradient-button-primary;
-  color: $text-primary;
+  background: $color-background;
+  border: 1px solid $color-primary;
+  border-radius: 0;
+  color: $color-primary;
 
   &:hover:not(:disabled) {
-    background: $gradient-button-primary-hover;
+    background: $color-background-light;
   }
 }
 
@@ -83,21 +85,19 @@
 
 // For header buttons (menu, search, history)
 @mixin btn-header {
-  background: $gradient-button-primary;
-  border: none;
-  color: $text-primary;
+  background: $color-background;
+  border: 1px solid $color-primary;
+  color: $color-primary;
   padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
+  border-radius: 0;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: $shadow-sm;
-  transition: all 0.2s;
+  transition: background 0.2s;
 
   &:hover {
-    background: $gradient-button-primary-hover;
-    transform: scale(1.05);
+    background: $color-background-light;
   }
 }
 
