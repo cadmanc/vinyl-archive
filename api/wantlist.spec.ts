@@ -22,14 +22,18 @@ const createResponse = () => {
 };
 
 const owner = { 'x-owner-key': 'owner-secret' };
-const savedFile = (releaseIds: number[]) => ({
+const savedFile = (releaseIds: number[], byMaster?: Record<string, number[]>) => ({
   ok: true,
   status: 200,
   json: async () => ({
     sha: 'abc',
-    content: Buffer.from(JSON.stringify({ releaseIds })).toString('base64'),
+    content: Buffer.from(
+      JSON.stringify({ releaseIds, ...(byMaster ? { byMaster } : {}) }),
+    ).toString('base64'),
   }),
 });
+
+const savedFileWithMasters = savedFile;
 
 describe('wantlist API', () => {
   let fetchMock: jest.Mock;
@@ -58,7 +62,10 @@ describe('wantlist API', () => {
       .mockResolvedValueOnce({ ok: true, status: 200 });
     const response = createResponse();
 
-    await handler({ method: 'PUT', query: { releaseId: '42' }, headers: owner }, response);
+    await handler(
+      { method: 'PUT', query: { releaseId: '42', masterId: '99' }, headers: owner },
+      response,
+    );
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
@@ -71,8 +78,28 @@ describe('wantlist API', () => {
     expect(body).toEqual(expect.objectContaining({ branch: 'owner-data', sha: 'abc' }));
     expect(JSON.parse(Buffer.from(body.content, 'base64').toString())).toEqual({
       releaseIds: [7, 42],
+      byMaster: { '99': [42] },
     });
     expect(response.body).toEqual({ releaseId: 42, wanted: true });
+  });
+
+  it('clears the master dot only when the last wanted pressing of that album is removed', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, status: 200 })
+      .mockResolvedValueOnce(savedFileWithMasters([7, 42], { '99': [7, 42] }))
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+    const response = createResponse();
+
+    await handler(
+      { method: 'DELETE', query: { releaseId: '42', masterId: '99' }, headers: owner },
+      response,
+    );
+
+    const [, init] = fetchMock.mock.calls[2];
+    expect(JSON.parse(Buffer.from(JSON.parse(init.body).content, 'base64').toString())).toEqual({
+      releaseIds: [7],
+      byMaster: { '99': [7] },
+    });
   });
 
   it('treats removing a release that is already gone as done', async () => {

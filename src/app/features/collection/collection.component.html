@@ -164,7 +164,16 @@
                               } @else {
                                 <span></span>
                               }
-                              <span class="missing-album-year">{{ album.year || '' }}</span>
+                              <span class="missing-album-year">
+                                {{ album.year || '' }}
+                                @if (wantlist.isWantedMaster(album.masterId)) {
+                                  <span
+                                    class="want-dot"
+                                    title="At least one pressing is on the wantlist"
+                                    aria-label="At least one pressing is on the wantlist"
+                                  ></span>
+                                }
+                              </span>
                               <span class="missing-album-arrow" aria-hidden="true">{{
                                 isAlbumExpanded(album.masterId) ? '&#x25B2;' : '&#x25BC;'
                               }}</span>
@@ -284,7 +293,16 @@
                                     hiddenAlbums.isPending(album.masterId) ? 'Saving…' : 'Unhide'
                                   }}
                                 </button>
-                                <span class="missing-album-year">{{ album.year || '' }}</span>
+                                <span class="missing-album-year">
+                                  {{ album.year || '' }}
+                                  @if (wantlist.isWantedMaster(album.masterId)) {
+                                    <span
+                                      class="want-dot"
+                                      title="At least one pressing is on the wantlist"
+                                      aria-label="At least one pressing is on the wantlist"
+                                    ></span>
+                                  }
+                                </span>
                                 <span></span>
                               </div>
                             }

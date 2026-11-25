@@ -110,7 +110,7 @@ interface CollectionPage {
 
 interface WantsPage {
   pagination: { pages: number };
-  wants: Array<{ id: number }>;
+  wants: Array<{ id: number; basic_information?: { master_id?: number } }>;
 }
 
 /** Matches how the site keys an artist credit: every credited name, joined by "|". */
@@ -310,15 +310,26 @@ class Refresher {
     return { items, credits, ownedMasters };
   }
 
-  async wantlist(username: string): Promise<number[]> {
+  async wantlist(username: string): Promise<WantlistFile> {
     const ids: number[] = [];
+    const byMaster: Record<string, number[]> = {};
     for (let page = 1; ; page++) {
       const data = await this.get<WantsPage>(`/users/${encodeURIComponent(username)}/wants`, {
         per_page: '100',
         page: String(page),
       });
-      ids.push(...data.wants.map((want) => want.id));
-      if (page >= data.pagination.pages) return sortedIds(ids);
+      for (const want of data.wants) {
+        ids.push(want.id);
+        const masterId = want.basic_information?.master_id;
+        if (masterId) (byMaster[String(masterId)] ??= []).push(want.id);
+      }
+      if (page >= data.pagination.pages) {
+        for (const key of Object.keys(byMaster)) byMaster[key] = sortedIds(byMaster[key]);
+        return {
+          releaseIds: sortedIds(ids),
+          ...(Object.keys(byMaster).length ? { byMaster } : {}),
+        };
+      }
     }
   }
 
@@ -492,11 +503,11 @@ async function syncWantlist(refresher: Refresher, username: string): Promise<voi
   const githubToken = process.env['GITHUB_TOKEN']?.trim();
   if (!githubToken) return;
   try {
-    const releaseIds = await refresher.wantlist(username);
+    const wantlist = await refresher.wantlist(username);
     await updateOwnerFile<WantlistFile>(
       'wantlist.json',
       githubToken,
-      () => ({ releaseIds }),
+      () => wantlist,
       'Update the saved wantlist from Discogs',
     );
   } catch (error) {

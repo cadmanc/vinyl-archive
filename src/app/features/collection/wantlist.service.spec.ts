@@ -22,8 +22,11 @@ describe('WantlistService', () => {
   const ownerRequest = (method: string) =>
     expect.objectContaining({ method, headers: { 'X-Owner-Key': 'owner-secret' } });
 
-  const loaded = async (releaseIds: number[]) => {
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ releaseIds }) });
+  const loaded = async (releaseIds: number[], byMaster?: Record<string, number[]>) => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ releaseIds, ...(byMaster ? { byMaster } : {}) }),
+    });
     const service = new WantlistService();
     await service.load();
     return service;
@@ -78,24 +81,49 @@ describe('WantlistService', () => {
     const service = await loaded([]);
     fetchMock.mockResolvedValueOnce({ ok: true });
 
-    await service.toggle(5);
+    await service.toggle(5, 99);
 
-    expect(fetchMock).toHaveBeenLastCalledWith('/api/wantlist?releaseId=5', ownerRequest('PUT'));
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/wantlist?releaseId=5&masterId=99',
+      ownerRequest('PUT'),
+    );
     expect(service.isWanted(5)).toBe(true);
+    expect(service.isWantedMaster(99)).toBe(true);
     expect(service.isPending(5)).toBe(false);
 
     const reloaded = await loaded([]);
     expect(reloaded.isWanted(5)).toBe(true);
+    expect(reloaded.isWantedMaster(99)).toBe(true);
   });
 
   it('removes a pressing that is already wanted', async () => {
-    const service = await loaded([5]);
+    const service = await loaded([5], { '99': [5] });
     fetchMock.mockResolvedValueOnce({ ok: true });
 
-    await service.toggle(5);
+    await service.toggle(5, 99);
 
-    expect(fetchMock).toHaveBeenLastCalledWith('/api/wantlist?releaseId=5', ownerRequest('DELETE'));
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/wantlist?releaseId=5&masterId=99',
+      ownerRequest('DELETE'),
+    );
     expect(service.isWanted(5)).toBe(false);
+    expect(service.isWantedMaster(99)).toBe(false);
+  });
+
+  it('keeps the master dot when another pressing of the same album is still wanted', async () => {
+    const service = await loaded([5, 6], { '99': [5, 6] });
+    fetchMock.mockResolvedValueOnce({ ok: true });
+
+    await service.toggle(5, 99);
+
+    expect(service.isWantedMaster(99)).toBe(true);
+    expect(service.isWanted(6)).toBe(true);
+  });
+
+  it('shows the master dot from the saved wantlist', async () => {
+    const service = await loaded([5], { '99': [5] });
+    expect(service.isWantedMaster(99)).toBe(true);
+    expect(service.isWantedMaster(1)).toBe(false);
   });
 
   it('keeps the button as it was when Discogs rejects the change', async () => {

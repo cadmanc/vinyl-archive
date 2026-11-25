@@ -266,7 +266,7 @@ h1 {
 
 .missing-album-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 3.5rem 3rem 1.5rem;
+  grid-template-columns: minmax(0, 1fr) 3.5rem 3.75rem 1.5rem;
   gap: 0.5rem;
   align-items: baseline;
   width: 100%;
@@ -320,9 +320,21 @@ h1 {
 }
 
 .missing-album-year {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 0.35rem;
   color: $text-muted;
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
+}
+
+.want-dot {
+  flex: 0 0 auto;
+  width: 0.4rem;
+  height: 0.4rem;
+  background: #22c55e;
+  border-radius: 50%;
 }
 
 .missing-album-arrow {

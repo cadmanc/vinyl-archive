@@ -10,6 +10,41 @@ const ATTEMPTS = 4;
 
 export interface WantlistFile {
   releaseIds: number[];
+  /** Wanted pressings grouped by Discogs master, for the green dots on missing albums. */
+  byMaster?: Record<string, number[]>;
+}
+
+/** Adds or removes a pressing, and keeps the master grouping in step when `masterId` is known. */
+export function applyWantlistChange(
+  current: WantlistFile | null | undefined,
+  releaseId: number,
+  wanted: boolean,
+  masterId?: number,
+): WantlistFile {
+  const releaseIds = new Set(current?.releaseIds ?? []);
+  const byMaster: Record<string, number[]> = { ...(current?.byMaster ?? {}) };
+  if (wanted) releaseIds.add(releaseId);
+  else releaseIds.delete(releaseId);
+
+  if (masterId && masterId > 0) {
+    const key = String(masterId);
+    const ids = new Set(byMaster[key] ?? []);
+    if (wanted) ids.add(releaseId);
+    else ids.delete(releaseId);
+    if (ids.size) byMaster[key] = sortedIds(ids);
+    else delete byMaster[key];
+  } else if (!wanted) {
+    for (const key of Object.keys(byMaster)) {
+      const next = byMaster[key].filter((id) => id !== releaseId);
+      if (next.length) byMaster[key] = next;
+      else delete byMaster[key];
+    }
+  }
+
+  return {
+    releaseIds: sortedIds(releaseIds),
+    ...(Object.keys(byMaster).length ? { byMaster } : {}),
+  };
 }
 
 export interface HiddenAlbumsFile {

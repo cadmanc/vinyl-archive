@@ -1,5 +1,5 @@
 import { hasOwnerKey } from './_owner-auth.js';
-import { sortedIds, updateOwnerFile, type WantlistFile } from './_owner-data.js';
+import { applyWantlistChange, updateOwnerFile, type WantlistFile } from './_owner-data.js';
 
 const DISCOGS_API_URL = 'https://api.discogs.com';
 const DISCOGS_USER_AGENT = 'VinylArchive/1.0';
@@ -15,6 +15,11 @@ type VercelResponse = {
   setHeader: (name: string, value: string) => VercelResponse;
   json: (body: unknown) => VercelResponse;
 };
+
+function positiveInteger(value: string | string[] | undefined): number | null {
+  const parsed = Number(Array.isArray(value) ? value[0] : value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
 
 /**
  * Adds or removes a pressing on the owner's Discogs wantlist, then updates the saved copy
@@ -39,13 +44,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     res.status(401).json({ error: 'Only the owner can change the wantlist' });
     return;
   }
-  const releaseId = Number(
-    Array.isArray(req.query.releaseId) ? req.query.releaseId[0] : req.query.releaseId,
-  );
-  if (!Number.isInteger(releaseId) || releaseId <= 0) {
+  const releaseId = positiveInteger(req.query.releaseId);
+  if (!releaseId) {
     res.status(400).json({ error: 'A releaseId is required' });
     return;
   }
+  const masterId = positiveInteger(req.query.masterId) ?? undefined;
   const wanted = req.method === 'PUT';
 
   try {
@@ -73,12 +77,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       await updateOwnerFile<WantlistFile>(
         'wantlist.json',
         githubToken,
-        (current) => {
-          const ids = new Set(current?.releaseIds ?? []);
-          if (wanted) ids.add(releaseId);
-          else ids.delete(releaseId);
-          return { releaseIds: sortedIds(ids) };
-        },
+        (current) => applyWantlistChange(current, releaseId, wanted, masterId),
         `${wanted ? 'Want' : 'Unwant'} release ${releaseId}`,
       );
     } catch (error) {

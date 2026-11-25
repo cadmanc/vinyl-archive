@@ -195,6 +195,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
       this.filterService.setNotPlayedIn6Months(false);
     }
     void this.loadMissingAlbumsSummary();
+    void this.wantlist.load();
     void this.collectionValue.load();
     try {
       const releases = await this.db.getAllReleases();
