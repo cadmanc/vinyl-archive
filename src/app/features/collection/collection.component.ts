@@ -368,7 +368,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
 
   toggleAlbum(masterId: number): void {
     this.expandedAlbums.update((current) => toggled(current, masterId));
-    if (this.isAlbumExpanded(masterId)) void this.wantlist.load();
+    if (this.isAlbumExpanded(masterId)) void this.wantlist.load(true);
     const state = this.albumPressings()[masterId];
     if (this.isAlbumExpanded(masterId) && (!state || state.status === 'error')) {
       void this.loadPressings(masterId);

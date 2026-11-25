@@ -42,6 +42,20 @@ describe('WantlistService', () => {
     expect(service.isWanted(3)).toBe(false);
   });
 
+  it('refetches when opening an album asks for a fresh copy', async () => {
+    const service = await loaded([1]);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ releaseIds: [1, 31858829], byMaster: { '46533': [31858829] } }),
+    });
+
+    await service.load(true);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(service.isWanted(31858829)).toBe(true);
+    expect(service.isWantedMaster(46533)).toBe(true);
+  });
+
   it('shows an empty wantlist before the first one is saved', async () => {
     fetchMock.mockResolvedValueOnce({ ok: false, status: 404 });
     const service = new WantlistService();

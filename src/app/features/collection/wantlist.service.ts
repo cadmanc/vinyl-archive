@@ -31,7 +31,8 @@ export class WantlistService {
   readonly canEdit = signal(this.ownerKey !== null);
   private loading: Promise<void> | null = null;
 
-  load(): Promise<void> {
+  load(force = false): Promise<void> {
+    if (force) this.loading = null;
     this.loading ??= this.fetchWanted();
     return this.loading;
   }
