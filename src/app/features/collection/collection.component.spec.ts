@@ -85,6 +85,24 @@ describe('sortCollection', () => {
     expect(groups[1].releases).toHaveLength(3);
     expect(artistSection(groups[0].heading)).toBe('#');
   });
+
+  it('lists joint credits under a first artist who also has solo records', () => {
+    const joint = (id: number, artists: string[], title: string, originalYear: number) => ({
+      ...release(id, artists[0], title, originalYear, originalYear),
+      basicInfo: { artists, title, year: originalYear, originalYear, formats: [] },
+    });
+    const groups = groupCollection([
+      release(1, 'Janis Joplin', 'Pearl', 2012, 1971),
+      joint(2, ['Janis Joplin', 'Big Brother & The Holding Company'], 'Live At Winterland', 1998),
+      joint(3, ['Labrinth', 'Sia', 'Diplo', 'LSD (53)'], 'LSD', 2019),
+    ]);
+
+    expect(groups.map((group) => group.heading)).toEqual([
+      'Janis Joplin',
+      'Labrinth, Sia, Diplo, LSD',
+    ]);
+    expect(groups[0].releases.map((item) => item.id)).toEqual([1, 2]);
+  });
 });
 
 describe('CollectionComponent original year display', () => {
@@ -198,5 +216,43 @@ describe('CollectionComponent hidden missing albums', () => {
 
     hidden.hidden.set(new Set());
     expect(component.missingAlbums(group)).toHaveLength(2);
+  });
+
+  it("combines the missing albums of an artist's solo and joint credits", () => {
+    const component = new CollectionComponent(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      new HiddenAlbumsService(),
+    );
+    const owned = (id: number, artists: string[]): Release => ({
+      id,
+      instanceId: id,
+      basicInfo: { title: `Owned ${id}`, artists, formats: [] },
+      playCount: 0,
+      dateAdded: new Date(),
+    });
+    const solo = ['Janis Joplin'];
+    const joint = ['Janis Joplin', 'Big Brother & The Holding Company'];
+    const [group] = groupCollection([owned(1, solo), owned(2, joint)]);
+    const shared = { masterId: 20, title: 'Big Brother & The Holding Company', year: 1971 };
+
+    component.artistAlbums.set({
+      [artistCreditKey(solo)]: { status: 'ready', value: [shared] },
+    } as any);
+    expect(component.artistAlbumsState(group)).toEqual({ status: 'loading' });
+
+    component.artistAlbums.set({
+      [artistCreditKey(solo)]: { status: 'ready', value: [shared] },
+      [artistCreditKey(joint)]: {
+        status: 'ready',
+        value: [{ masterId: 21, title: 'Cheap Thrills', year: 1968 }, shared],
+      },
+    } as any);
+    expect(component.missingAlbums(group).map((album) => album.masterId)).toEqual([21, 20]);
+    expect(component.missingSummary(group)).toBe('2 Albums, 2 Missing');
   });
 });

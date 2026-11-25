@@ -59,8 +59,9 @@ type LoadState<T> =
   | { status: 'ready'; value: T }
   | { status: 'error' };
 
-function albumsKey(group: CollectionGroup): string {
-  return artistCreditKey(group.releases[0]?.basicInfo.artists ?? []);
+/** Every artist credit in a group; a group can hold an artist's solo and joint credits. */
+function albumsKeys(group: CollectionGroup): string[] {
+  return [...new Set(group.releases.map((release) => artistCreditKey(release.basicInfo.artists)))];
 }
 
 function toggled<T>(set: Set<T>, value: T): Set<T> {
@@ -268,7 +269,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
   }
 
   private unownedAlbums(group: CollectionGroup): MissingAlbum[] {
-    const state = this.artistAlbums()[albumsKey(group)];
+    const state = this.artistAlbumsState(group);
     if (state?.status !== 'ready') return [];
     const owned = this.ownedMasterIds();
     return state.value.filter((album) => !owned.has(album.masterId));
@@ -292,12 +293,35 @@ export class CollectionComponent implements OnInit, OnDestroy {
     });
   }
 
+  /** The group's credits combined: ready once every credit is, with shared albums listed once. */
   artistAlbumsState(group: CollectionGroup): LoadState<MissingAlbum[]> | undefined {
-    return this.artistAlbums()[albumsKey(group)];
+    const states = albumsKeys(group).map((key) => this.artistAlbums()[key]);
+    if (states.length === 1) return states[0];
+    if (states.some((state) => state?.status === 'error')) return { status: 'error' };
+    const ready = states.filter(
+      (state): state is { status: 'ready'; value: MissingAlbum[] } => state?.status === 'ready',
+    );
+    if (ready.length < states.length) {
+      return states.some((state) => state) ? { status: 'loading' } : undefined;
+    }
+    const albums = new Map<number, MissingAlbum>();
+    for (const album of ready.flatMap((state) => state.value)) albums.set(album.masterId, album);
+    const value = [...albums.values()].sort(
+      (left, right) =>
+        (left.year ?? Number.POSITIVE_INFINITY) - (right.year ?? Number.POSITIVE_INFINITY) ||
+        left.title.localeCompare(right.title),
+    );
+    return { status: 'ready', value };
+  }
+
+  private groupProgress(group: CollectionGroup): { checked: number; total?: number } | undefined {
+    return albumsKeys(group)
+      .map((key) => this.serverProgress()[key])
+      .find((progress) => progress);
   }
 
   checkingMessage(group: CollectionGroup): string {
-    const progress = this.serverProgress()[albumsKey(group)];
+    const progress = this.groupProgress(group);
     const counted = progress?.total
       ? ` (${progress.checked} of ${progress.total} titles so far)`
       : '';
@@ -305,13 +329,13 @@ export class CollectionComponent implements OnInit, OnDestroy {
   }
 
   missingSummary(group: CollectionGroup): string {
-    const state = this.artistAlbums()[albumsKey(group)];
+    const state = this.artistAlbumsState(group);
     if (state?.status === 'ready') {
       const owned = group.releases.length;
       return `${owned} ${owned === 1 ? 'Album' : 'Albums'}, ${this.missingAlbums(group).length} Missing`;
     }
     if (this.summaryStatus() !== 'ready') return 'Missing albums';
-    const progress = this.serverProgress()[albumsKey(group)];
+    const progress = this.groupProgress(group);
     if (progress?.total) return `Checking ${progress.checked} of ${progress.total}`;
     return 'Checking Discogs…';
   }
