@@ -1,5 +1,7 @@
 import {
+  ALBUM_RULES,
   buildSummary,
+  isDue,
   knownVerdict,
   missingAlbums,
   catalogKey,
@@ -31,6 +33,7 @@ const document = (overrides: Partial<ArtistDocument> = {}): ArtistDocument => ({
   nonAlbums: [],
   complete: false,
   fullCheckAt: '2026-11-19T00:00:00Z',
+  rules: ALBUM_RULES,
   ...overrides,
 });
 
@@ -196,5 +199,23 @@ describe('missingAlbums', () => {
       { masterId: 1, year: 1989 },
       { masterId: 3, year: 2015 },
     ]);
+  });
+});
+
+describe('album rule changes', () => {
+  const now = Date.parse('2026-11-20T00:00:00Z');
+
+  it('redoes artists checked under older rules', () => {
+    expect(isDue(document({ complete: true }), now)).toBe(false);
+    expect(isDue(document({ complete: true, rules: undefined }), now)).toBe(true);
+  });
+
+  it('hides results from older rules but reuses their vinyl verdicts', () => {
+    const old = document({ complete: true, rules: undefined, nonAlbums: [2] });
+    const redo = startDocument(nirvana, old, now);
+
+    expect(redo.rules).toBe(ALBUM_RULES);
+    expect(redo.previousAlbums).toBeUndefined();
+    expect(redo.known).toEqual({ albums: [1], nonAlbums: [2] });
   });
 });

@@ -33,6 +33,7 @@ import {
   type PressingsFile,
   type WantedAlbum,
 } from './pressings-refresh.js';
+import { isTypedAlbum, typedAlbums, type TypedAlbum } from './album-types.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // The workflow runs daily for collection and wantlist changes; discographies are listed
@@ -46,9 +47,11 @@ const MIN_REQUEST_GAP_MS = 1_250;
 // MusicBrainz asks for at most one request per second.
 const MUSICBRAINZ_GAP_MS = 1_100;
 const MUSICBRAINZ_ATTEMPTS = 4;
-const MUSICBRAINZ_URL = 'https://musicbrainz.org/ws/2/release-group/';
+const MUSICBRAINZ_URL = 'https://musicbrainz.org/ws/2/';
 const USER_AGENT = 'VinylArchive/1.0 (https://records.psamera.com)';
 const SAVE_EVERY_REQUESTS = 50;
+/** Bumped when the rules for which titles count as albums change, so every artist is redone. */
+export const ALBUM_RULES = 2;
 
 export interface ArtistCredit {
   id: number;
@@ -78,6 +81,13 @@ export interface ArtistDocument {
   previousAlbums?: ArtistMaster[];
   /** Earlier verdicts reused by a recheck, so only new titles cost a Discogs request. */
   known?: { albums: number[]; nonAlbums: number[] };
+  /** The rules the albums were chosen by; see ALBUM_RULES. */
+  rules?: number;
+  /**
+   * The artist's studio, live and remix albums on MusicBrainz, or null when MusicBrainz
+   * doesn't know the artist and every vinyl album is listed.
+   */
+  typedAlbums?: TypedAlbum[] | null;
 }
 
 export interface SummaryEntry {
@@ -124,7 +134,12 @@ export function collectionArtists(credits: ArtistCredit[][]): Map<string, Artist
 }
 
 export function isDue(document: ArtistDocument | undefined, now = Date.now()): boolean {
-  return !document || !document.complete || now - Date.parse(document.cachedAt) > CHECK_INTERVAL_MS;
+  return (
+    !document ||
+    !document.complete ||
+    document.rules !== ALBUM_RULES ||
+    now - Date.parse(document.cachedAt) > CHECK_INTERVAL_MS
+  );
 }
 
 /**
@@ -179,6 +194,9 @@ export function startDocument(
   now = Date.now(),
 ): ArtistDocument {
   const earlier = previous?.complete ? previous : undefined;
+  // Results chosen by older rules aren't shown while the artist is redone.
+  const showable = (document?: ArtistDocument) =>
+    document?.rules === ALBUM_RULES ? document : undefined;
   const fullCheck = !earlier || now - Date.parse(earlier.fullCheckAt) > FULL_CHECK_INTERVAL_MS;
   // New releases often reach Discogs before their vinyl does, so recent titles without a
   // vinyl album are looked at again on every recheck, not just every six months.
@@ -197,8 +215,9 @@ export function startDocument(
     albums: [],
     nonAlbums: [],
     complete: false,
+    rules: ALBUM_RULES,
     fullCheckAt: fullCheck ? new Date(now).toISOString() : earlier.fullCheckAt,
-    previousAlbums: earlier ? earlier.albums : previous?.previousAlbums,
+    previousAlbums: showable(earlier)?.albums ?? showable(previous)?.previousAlbums,
     known: earlier && {
       albums: earlier.albums.map((album) => album.masterId),
       nonAlbums: fullCheck ? [] : earlier.nonAlbums.filter((masterId) => !recent.has(masterId)),
@@ -244,8 +263,14 @@ class Refresher {
   }
 
   async musicBrainz<T>(query: string): Promise<T> {
-    const url = new URL(MUSICBRAINZ_URL);
-    url.search = new URLSearchParams({ query, fmt: 'json', limit: '20' }).toString();
+    const result = await this.musicBrainzGet<T>('release-group/', { query, limit: '20' });
+    if (!result) throw new Error('MusicBrainz request failed with 404');
+    return result;
+  }
+
+  async musicBrainzGet<T>(pathname: string, params: Record<string, string>): Promise<T | null> {
+    const url = new URL(pathname, MUSICBRAINZ_URL);
+    url.search = new URLSearchParams({ ...params, fmt: 'json' }).toString();
     for (let attempt = 1; ; attempt++) {
       const wait = this.lastMusicBrainzAt + MUSICBRAINZ_GAP_MS - Date.now();
       if (wait > 0) await sleep(wait);
@@ -255,6 +280,7 @@ class Refresher {
         signal: AbortSignal.timeout(30_000),
       });
       if (response.ok) return (await response.json()) as T;
+      if (response.status === 404) return null;
       // MusicBrainz answers 503 when it's busy or the shared runner address is asking too often.
       if (response.status !== 503 || attempt >= MUSICBRAINZ_ATTEMPTS) {
         throw new Error(`MusicBrainz request failed with ${response.status}`);
@@ -326,8 +352,23 @@ class Refresher {
 
     const listed =
       document.totalPages !== undefined && document.pagesFetched >= document.totalPages;
-    while (listed && document.checked < document.masters.length && this.timeLeft()) {
+    if (listed && document.typedAlbums === undefined && this.timeLeft()) {
+      document.typedAlbums = await typedAlbums(document.artists, (pathname, params) =>
+        this.musicBrainzGet(pathname, params),
+      );
+      await this.save(document);
+    }
+    while (
+      listed &&
+      document.typedAlbums !== undefined &&
+      document.checked < document.masters.length &&
+      this.timeLeft()
+    ) {
       const master = document.masters[document.checked];
+      if (document.typedAlbums && !isTypedAlbum(master, document.typedAlbums)) {
+        document.checked++;
+        continue;
+      }
       try {
         let album = knownVerdict(master.masterId, document, ownedMasters);
         if (album === undefined) {
@@ -347,8 +388,12 @@ class Refresher {
       await this.saveIfDue(document);
     }
 
-    document.complete = listed && document.checked >= document.masters.length;
-    if (document.complete) delete document.known;
+    document.complete =
+      listed && document.typedAlbums !== undefined && document.checked >= document.masters.length;
+    if (document.complete) {
+      delete document.known;
+      delete document.typedAlbums;
+    }
     await this.save(document);
   }
 
@@ -504,7 +549,9 @@ async function main(): Promise<void> {
     if (!refresher.timeLeft()) break;
     const existing = documents.get(key);
     const document =
-      existing && !existing.complete ? existing : startDocument(artists.get(key)!, existing);
+      existing && !existing.complete && existing.rules === ALBUM_RULES
+        ? existing
+        : startDocument(artists.get(key)!, existing);
     documents.set(key, document);
     try {
       await refresher.check(document, ownedMasters);
