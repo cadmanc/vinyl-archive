@@ -544,6 +544,8 @@ async function main(): Promise<void> {
   const artists = collectionArtists(credits);
   const documents = await readDocuments(dataDir, artists);
   const progressBefore = totalProgress(documents);
+  // A redo starts an artist from zero, so its totals alone can't show the work done.
+  let artistsRedone = 0;
 
   for (const key of refreshOrder(artists, documents)) {
     if (!refresher.timeLeft()) break;
@@ -552,6 +554,7 @@ async function main(): Promise<void> {
       existing && !existing.complete && existing.rules === ALBUM_RULES
         ? existing
         : startDocument(artists.get(key)!, existing);
+    const redo = document !== existing;
     documents.set(key, document);
     try {
       await refresher.check(document, ownedMasters);
@@ -566,6 +569,7 @@ async function main(): Promise<void> {
       }
       await refresher.save(document);
     }
+    if (redo && (document.complete || document.pagesFetched > 0)) artistsRedone++;
     console.log(
       `${key}: ${document.complete ? 'done' : 'in progress'} (${document.checked}/${document.masters.length})`,
     );
@@ -616,6 +620,7 @@ async function main(): Promise<void> {
   // With nothing gained this run, what's left keeps failing; don't keep retrying it.
   const progressed =
     totalProgress(documents) > progressBefore ||
+    artistsRedone > 0 ||
     pressingsProgress > 0 ||
     catalogRemaining < catalogBefore;
   console.log(`Remaining: ${remaining}; progressed: ${progressed}`);
