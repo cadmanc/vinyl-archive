@@ -89,6 +89,17 @@ export function isVinylAlbum(vinylVersions: DiscogsMasterVersion[]): boolean {
   return vinylVersions.some((version) => isOfficialVersion(version) && isAlbumVersion(version));
 }
 
+/** An EP counts if it has an official vinyl pressing that isn't a single. */
+export function isVinylEp(vinylVersions: DiscogsMasterVersion[]): boolean {
+  return vinylVersions.some(
+    (version) =>
+      isOfficialVersion(version) &&
+      !formatDescriptions(version.format).some((description) =>
+        ['Single', 'Maxi-Single'].includes(description),
+      ),
+  );
+}
+
 export function parseYear(released: string | undefined): number | undefined {
   const year = Number.parseInt(released ?? '', 10);
   return Number.isInteger(year) && year > 0 ? year : undefined;

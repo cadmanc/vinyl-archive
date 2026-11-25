@@ -4,6 +4,7 @@ import handler, {
   isAlbumVersion,
   isOfficialVersion,
   isVinylAlbum,
+  isVinylEp,
   parseYear,
   sortPressings,
   toPressing,
@@ -41,6 +42,12 @@ describe('missing albums classification', () => {
     );
     expect(isVinylAlbum([version('LP, Album, Unofficial Release')])).toBe(false);
     expect(isVinylAlbum([])).toBe(false);
+  });
+
+  it('accepts official vinyl EPs but not singles', () => {
+    expect(isVinylEp([version('7", EP'), version('7", Single')])).toBe(true);
+    expect(isVinylEp([version('7", Single')])).toBe(false);
+    expect(isVinylEp([version('12", EP, Promo')])).toBe(false);
   });
 
   it('reads years and treats Discogs "0" as unknown', () => {

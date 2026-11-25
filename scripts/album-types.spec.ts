@@ -52,6 +52,13 @@ describe('isTypedAlbum', () => {
   });
 });
 
+describe('typedAlbum', () => {
+  it('marks EPs', () => {
+    expect(typedAlbum({ title: 'Four by the Beach Boys', 'primary-type': 'EP' }).ep).toBe(true);
+    expect(typedAlbum({ title: 'Pet Sounds', 'primary-type': 'Album' }).ep).toBeUndefined();
+  });
+});
+
 describe('typedAlbums', () => {
   it('keeps studio, live and remix albums of every credited artist', async () => {
     const lookup = jest.fn(async (pathname: string, params: Record<string, string>) => {

@@ -13,6 +13,7 @@ import {
   discogsGet,
   DiscogsNotFoundError,
   isVinylAlbum,
+  isVinylEp,
   sleep,
   type DiscogsArtistReleasesPage,
   type DiscogsMasterVersionsPage,
@@ -33,7 +34,7 @@ import {
   type PressingsFile,
   type WantedAlbum,
 } from './pressings-refresh.js';
-import { isTypedAlbum, typedAlbums, type TypedAlbum } from './album-types.js';
+import { typedAlbums, typedMatch, type TypedAlbum } from './album-types.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // The workflow runs daily for collection and wantlist changes; discographies are listed
@@ -51,7 +52,7 @@ const MUSICBRAINZ_URL = 'https://musicbrainz.org/ws/2/';
 const USER_AGENT = 'VinylArchive/1.0 (https://records.psamera.com)';
 const SAVE_EVERY_REQUESTS = 50;
 /** Bumped when the rules for which titles count as albums change, so every artist is redone. */
-export const ALBUM_RULES = 2;
+export const ALBUM_RULES = 3;
 
 export interface ArtistCredit {
   id: number;
@@ -84,7 +85,7 @@ export interface ArtistDocument {
   /** The rules the albums were chosen by; see ALBUM_RULES. */
   rules?: number;
   /**
-   * The artist's studio, live and remix albums on MusicBrainz, or null when MusicBrainz
+   * The artist's studio, live and remix albums and EPs on MusicBrainz, or null when MusicBrainz
    * doesn't know the artist and every vinyl album is listed.
    */
   typedAlbums?: TypedAlbum[] | null;
@@ -365,18 +366,21 @@ class Refresher {
       this.timeLeft()
     ) {
       const master = document.masters[document.checked];
-      if (document.typedAlbums && !isTypedAlbum(master, document.typedAlbums)) {
+      const typed = document.typedAlbums && typedMatch(master, document.typedAlbums);
+      if (document.typedAlbums && !typed) {
         document.checked++;
         continue;
       }
       try {
         let album = knownVerdict(master.masterId, document, ownedMasters);
+        // Earlier checks only accepted full albums, so an EP's earlier "no" is asked again.
+        if (album === false && typed?.ep) album = undefined;
         if (album === undefined) {
           const data = await this.get<DiscogsMasterVersionsPage>(
             `/masters/${master.masterId}/versions`,
             { format: 'Vinyl', per_page: '100' },
           );
-          album = isVinylAlbum(data.versions);
+          album = typed?.ep ? isVinylEp(data.versions) : isVinylAlbum(data.versions);
         }
         if (album) document.albums.push(master);
         else document.nonAlbums.push(master.masterId);
