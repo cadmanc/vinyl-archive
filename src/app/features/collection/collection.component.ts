@@ -9,6 +9,7 @@ import { FilterService } from '../../shared/services/filter.service';
 import {
   artistCreditKey,
   MissingAlbum,
+  missingAlbumLabel,
   MissingAlbumsService,
   pressingLabel,
   pressingSummary,
@@ -152,6 +153,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
   openHiddenLists = signal<Set<string>>(new Set());
   readonly pressingSummary = pressingSummary;
   readonly pressingLabel = pressingLabel;
+  readonly missingAlbumLabel = missingAlbumLabel;
   get detailProgress() {
     return (
       this.masterReleaseService.releaseDetailProgress?.() ?? {

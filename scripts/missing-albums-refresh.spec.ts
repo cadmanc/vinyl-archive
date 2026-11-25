@@ -105,9 +105,9 @@ describe('rechecks', () => {
   it('reuses earlier verdicts so only new titles need a Discogs request', () => {
     const recheck = startDocument(nirvana, earlier, now);
     const owned = new Set([99]);
-    expect(knownVerdict(1, recheck, owned)).toBe(true);
+    expect(knownVerdict(1, recheck, owned)).toBe('album');
     expect(knownVerdict(2, recheck, owned)).toBe(false);
-    expect(knownVerdict(99, recheck, owned)).toBe(true);
+    expect(knownVerdict(99, recheck, owned)).toBe('album');
     expect(knownVerdict(3, recheck, owned)).toBeUndefined();
     expect(recheck.fullCheckAt).toBe(earlier.fullCheckAt);
   });
@@ -119,7 +119,7 @@ describe('rechecks', () => {
       now,
     );
     expect(knownVerdict(2, recheck, new Set())).toBeUndefined();
-    expect(knownVerdict(1, recheck, new Set())).toBe(true);
+    expect(knownVerdict(1, recheck, new Set())).toBe('album');
     expect(recheck.fullCheckAt).toBe(new Date(now).toISOString());
   });
 

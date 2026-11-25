@@ -1,4 +1,5 @@
 import handler from './hidden-albums';
+import { autoHideSecondaryAlbums, applyHiddenChange } from './_owner-data';
 
 const createResponse = () => {
   const response = { statusCode: 0, body: undefined as unknown } as {
@@ -73,13 +74,13 @@ describe('hidden albums API', () => {
     expect(response.body).toEqual({ masterIds: [42] });
   });
 
-  it('unhides an album', async () => {
+  it('unhides an album and remembers it so EPs stay revealed', async () => {
     fetchMock.mockResolvedValueOnce(savedFile([5, 42])).mockResolvedValueOnce({ ok: true });
     const response = createResponse();
 
     await handler({ method: 'DELETE', query: { masterId: '42' }, headers: owner }, response);
 
-    expect(response.body).toEqual({ masterIds: [5] });
+    expect(response.body).toEqual({ masterIds: [5], revealedMasterIds: [42] });
   });
 
   it('tries again when another change was saved at the same moment', async () => {
@@ -115,5 +116,16 @@ describe('hidden albums API', () => {
     const response = createResponse();
     await handler({ method: 'PUT', query: { masterId: '42' }, headers: owner }, response);
     expect(response.statusCode).toBe(502);
+  });
+});
+
+describe('auto-hide EPs and compilations', () => {
+  it('hides new secondary albums without re-hiding ones the owner revealed', () => {
+    const current = applyHiddenChange({ masterIds: [1] }, 2, false);
+    expect(current).toEqual({ masterIds: [1], revealedMasterIds: [2] });
+    expect(autoHideSecondaryAlbums(current, [2, 3, 4])).toEqual({
+      masterIds: [1, 3, 4],
+      revealedMasterIds: [2],
+    });
   });
 });

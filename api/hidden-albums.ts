@@ -1,5 +1,5 @@
 import { hasOwnerKey } from './_owner-auth.js';
-import { sortedIds, updateOwnerFile, type HiddenAlbumsFile } from './_owner-data.js';
+import { applyHiddenChange, updateOwnerFile, type HiddenAlbumsFile } from './_owner-data.js';
 
 type VercelRequest = {
   method?: string;
@@ -44,12 +44,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     const saved = await updateOwnerFile<HiddenAlbumsFile>(
       'hidden-albums.json',
       githubToken,
-      (current) => {
-        const ids = new Set(current?.masterIds ?? []);
-        if (hide) ids.add(masterId);
-        else ids.delete(masterId);
-        return { masterIds: sortedIds(ids) };
-      },
+      (current) => applyHiddenChange(current, masterId, hide),
       `${hide ? 'Hide' : 'Unhide'} album ${masterId}`,
     );
     res.status(200).json(saved);

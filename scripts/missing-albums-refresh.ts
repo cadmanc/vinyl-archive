@@ -12,13 +12,14 @@ import {
   creditsAllArtists,
   discogsGet,
   DiscogsNotFoundError,
-  isVinylAlbum,
+  vinylReleaseKind,
   sleep,
   type DiscogsArtistReleasesPage,
   type DiscogsMasterVersionsPage,
 } from '../api/missing-albums.js';
 import type { DiscogsCollectionItem } from '../api/_catalog-format.js';
 import {
+  autoHideSecondaryAlbums,
   readOwnerFile,
   sortedIds,
   updateOwnerFile,
@@ -33,7 +34,14 @@ import {
   type PressingsFile,
   type WantedAlbum,
 } from './pressings-refresh.js';
-import { isTypedAlbum, typedAlbums, type TypedAlbum } from './album-types.js';
+import {
+  isSecondaryKind,
+  isTypedAlbum,
+  matchingTypedAlbum,
+  typedAlbums,
+  type AlbumKind,
+  type TypedAlbum,
+} from './album-types.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // The workflow runs daily for collection and wantlist changes; discographies are listed
@@ -51,7 +59,7 @@ const MUSICBRAINZ_URL = 'https://musicbrainz.org/ws/2/';
 const USER_AGENT = 'VinylArchive/1.0 (https://records.psamera.com)';
 const SAVE_EVERY_REQUESTS = 50;
 /** Bumped when the rules for which titles count as albums change, so every artist is redone. */
-export const ALBUM_RULES = 2;
+export const ALBUM_RULES = 3;
 
 export interface ArtistCredit {
   id: number;
@@ -62,6 +70,8 @@ export interface ArtistMaster {
   masterId: number;
   title: string;
   year?: number;
+  /** Set on titles kept in albums[]; EPs and compilations are auto-hidden. */
+  kind?: AlbumKind;
 }
 
 export interface ArtistDocument {
@@ -80,12 +90,12 @@ export interface ArtistDocument {
   /** Results from the previous check, still shown while a recheck is in progress. */
   previousAlbums?: ArtistMaster[];
   /** Earlier verdicts reused by a recheck, so only new titles cost a Discogs request. */
-  known?: { albums: number[]; nonAlbums: number[] };
+  known?: { albums: number[]; kinds?: Record<string, AlbumKind>; nonAlbums: number[] };
   /** The rules the albums were chosen by; see ALBUM_RULES. */
   rules?: number;
   /**
-   * The artist's studio, live and remix albums on MusicBrainz, or null when MusicBrainz
-   * doesn't know the artist and every vinyl album is listed.
+   * The artist's albums, EPs and compilations on MusicBrainz, or null when MusicBrainz
+   * doesn't know the artist and every vinyl album/EP/compilation is listed.
    */
   typedAlbums?: TypedAlbum[] | null;
 }
@@ -220,6 +230,14 @@ export function startDocument(
     previousAlbums: showable(earlier)?.albums ?? showable(previous)?.previousAlbums,
     known: earlier && {
       albums: earlier.albums.map((album) => album.masterId),
+      ...(() => {
+        const kinds = Object.fromEntries(
+          earlier.albums
+            .filter((album) => album.kind)
+            .map((album) => [String(album.masterId), album.kind!]),
+        );
+        return Object.keys(kinds).length ? { kinds } : {};
+      })(),
       nonAlbums: fullCheck ? [] : earlier.nonAlbums.filter((masterId) => !recent.has(masterId)),
     },
   };
@@ -233,8 +251,11 @@ export function knownVerdict(
   masterId: number,
   document: ArtistDocument,
   ownedMasters: Set<number>,
-): boolean | undefined {
-  if (ownedMasters.has(masterId) || document.known?.albums.includes(masterId)) return true;
+): AlbumKind | false | undefined {
+  if (ownedMasters.has(masterId)) return document.known?.kinds?.[String(masterId)] ?? 'album';
+  if (document.known?.albums.includes(masterId)) {
+    return document.known.kinds?.[String(masterId)] ?? 'album';
+  }
   if (document.known?.nonAlbums.includes(masterId)) return false;
   return undefined;
 }
@@ -381,15 +402,19 @@ class Refresher {
         continue;
       }
       try {
-        let album = knownVerdict(master.masterId, document, ownedMasters);
-        if (album === undefined) {
+        let kind = knownVerdict(master.masterId, document, ownedMasters);
+        if (kind === undefined) {
           const data = await this.get<DiscogsMasterVersionsPage>(
             `/masters/${master.masterId}/versions`,
             { format: 'Vinyl', per_page: '100' },
           );
-          album = isVinylAlbum(data.versions);
+          kind = vinylReleaseKind(data.versions);
         }
-        if (album) document.albums.push(master);
+        const typed = document.typedAlbums
+          ? matchingTypedAlbum(master, document.typedAlbums)
+          : undefined;
+        if (kind && typed?.kind) kind = typed.kind;
+        if (kind) document.albums.push({ ...master, kind });
         else document.nonAlbums.push(master.masterId);
       } catch (error) {
         // A master Discogs can't return is skipped rather than blocking the rest of the artist.
@@ -477,6 +502,23 @@ export function missingAlbums(
     }
   }
   return [...albums.values()];
+}
+
+/** EPs and compilations among the missing titles — auto-hidden unless the owner revealed them. */
+export function secondaryMissingAlbums(
+  documents: Map<string, ArtistDocument>,
+  ownedMasters: Set<number>,
+): number[] {
+  const ids = new Set<number>();
+  for (const document of documents.values()) {
+    const shown = document.complete ? document.albums : (document.previousAlbums ?? []);
+    for (const album of shown) {
+      if (!ownedMasters.has(album.masterId) && isSecondaryKind(album.kind)) {
+        ids.add(album.masterId);
+      }
+    }
+  }
+  return sortedIds(ids);
 }
 
 async function readJson<T>(file: string): Promise<T | null> {
@@ -593,6 +635,20 @@ async function main(): Promise<void> {
   );
 
   const missing = missingAlbums(documents, ownedMasters);
+  const secondary = secondaryMissingAlbums(documents, ownedMasters);
+  const githubToken = process.env['GITHUB_TOKEN']?.trim();
+  if (githubToken && secondary.length) {
+    try {
+      await updateOwnerFile<HiddenAlbumsFile>(
+        'hidden-albums.json',
+        githubToken,
+        (current) => autoHideSecondaryAlbums(current, secondary),
+        'Hide newly found EPs and compilations',
+      );
+    } catch (error) {
+      console.warn('Could not auto-hide EPs and compilations this run:', error);
+    }
+  }
   const hidden = await hiddenAlbums();
   const wanted = missing.filter((album) => !hidden.has(album.masterId));
   const pressings = await readPressings(pressingsDir);

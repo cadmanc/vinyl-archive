@@ -5,6 +5,13 @@ export interface MissingAlbum {
   masterId: number;
   title: string;
   year?: number;
+  kind?: 'album' | 'ep' | 'compilation';
+}
+
+export function missingAlbumLabel(album: MissingAlbum): string {
+  if (album.kind === 'ep') return `${album.title} (EP)`;
+  if (album.kind === 'compilation') return `${album.title} (Compilation)`;
+  return album.title;
 }
 
 export interface VinylPressing {

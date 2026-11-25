@@ -149,7 +149,7 @@
                                 class="missing-album-title"
                                 [attr.aria-expanded]="isAlbumExpanded(album.masterId)"
                               >
-                                {{ album.title }}
+                                {{ missingAlbumLabel(album) }}
                               </button>
                               @if (hiddenAlbums.canEdit()) {
                                 <button
@@ -283,7 +283,9 @@
                           @if (isHiddenListOpen(group)) {
                             @for (album of hidden; track album.masterId) {
                               <div class="missing-album-row hidden-album-row">
-                                <span class="missing-album-title">{{ album.title }}</span>
+                                <span class="missing-album-title">{{
+                                  missingAlbumLabel(album)
+                                }}</span>
                                 <button
                                   type="button"
                                   class="hide-album-button"

@@ -4,6 +4,7 @@ import handler, {
   isAlbumVersion,
   isOfficialVersion,
   isVinylAlbum,
+  vinylReleaseKind,
   parseYear,
   sortPressings,
   toPressing,
@@ -41,6 +42,15 @@ describe('missing albums classification', () => {
     );
     expect(isVinylAlbum([version('LP, Album, Unofficial Release')])).toBe(false);
     expect(isVinylAlbum([])).toBe(false);
+  });
+
+  it('classifies official albums, compilations and EPs', () => {
+    expect(vinylReleaseKind([version('LP, Album')])).toBe('album');
+    expect(vinylReleaseKind([version('2xLP, Compilation')])).toBe('compilation');
+    expect(vinylReleaseKind([version('12", EP')])).toBe('ep');
+    expect(vinylReleaseKind([version('12", Mini-Album')])).toBe('ep');
+    expect(vinylReleaseKind([version('7", Single')])).toBe(false);
+    expect(vinylReleaseKind([version('LP, Album'), version('12", EP')])).toBe('album');
   });
 
   it('reads years and treats Discogs "0" as unknown', () => {

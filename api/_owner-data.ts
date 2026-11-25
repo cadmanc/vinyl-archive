@@ -49,6 +49,44 @@ export function applyWantlistChange(
 
 export interface HiddenAlbumsFile {
   masterIds: number[];
+  /** EPs/compilations the owner unhid; the daily job must not hide these again. */
+  revealedMasterIds?: number[];
+}
+
+export function applyHiddenChange(
+  current: HiddenAlbumsFile | null | undefined,
+  masterId: number,
+  hide: boolean,
+): HiddenAlbumsFile {
+  const ids = new Set(current?.masterIds ?? []);
+  const revealed = new Set(current?.revealedMasterIds ?? []);
+  if (hide) {
+    ids.add(masterId);
+    revealed.delete(masterId);
+  } else {
+    ids.delete(masterId);
+    revealed.add(masterId);
+  }
+  return {
+    masterIds: sortedIds(ids),
+    ...(revealed.size ? { revealedMasterIds: sortedIds(revealed) } : {}),
+  };
+}
+
+/** Hides newly found EPs and compilations without undoing anything the owner unhid. */
+export function autoHideSecondaryAlbums(
+  current: HiddenAlbumsFile | null | undefined,
+  secondaryIds: Iterable<number>,
+): HiddenAlbumsFile {
+  const ids = new Set(current?.masterIds ?? []);
+  const revealed = new Set(current?.revealedMasterIds ?? []);
+  for (const id of secondaryIds) {
+    if (!revealed.has(id)) ids.add(id);
+  }
+  return {
+    masterIds: sortedIds(ids),
+    ...(revealed.size ? { revealedMasterIds: sortedIds(revealed) } : {}),
+  };
 }
 
 function contentsUrl(file: string): string {

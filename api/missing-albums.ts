@@ -8,6 +8,9 @@ const RATE_LIMIT_FLOOR = 5;
 const EXCLUDED_DESCRIPTIONS = ['Unofficial Release', 'Test Pressing', 'Promo'];
 const ALBUM_DESCRIPTIONS = ['Album', 'Compilation'];
 const NON_ALBUM_DESCRIPTIONS = ['Single', 'Maxi-Single', 'EP', 'Mini-Album'];
+const EP_DESCRIPTIONS = ['EP', 'Mini-Album'];
+
+export type VinylKind = 'album' | 'ep' | 'compilation';
 // Pressing lists rarely change; the CDN serves repeat requests without calling Discogs.
 const PRESSINGS_CACHE_CONTROL = 'public, s-maxage=604800, stale-while-revalidate=86400';
 
@@ -84,9 +87,43 @@ export function isAlbumVersion(version: DiscogsMasterVersion): boolean {
   );
 }
 
-/** A master counts as a full album only if it has an official vinyl album pressing. */
+/**
+ * Official vinyl album, compilation, or EP — the titles we keep in the missing list.
+ * Compilations and EPs are auto-hidden until the owner unhides them.
+ */
+export function vinylReleaseKind(vinylVersions: DiscogsMasterVersion[]): VinylKind | false {
+  const official = vinylVersions.filter(isOfficialVersion);
+  const descriptions = (version: DiscogsMasterVersion) => formatDescriptions(version.format);
+  const studioAlbum = official.some((version) => {
+    const parts = descriptions(version);
+    return (
+      parts.includes('Album') &&
+      !parts.includes('Compilation') &&
+      !parts.some((part) => NON_ALBUM_DESCRIPTIONS.includes(part))
+    );
+  });
+  if (studioAlbum) return 'album';
+  const compilation = official.some((version) => {
+    const parts = descriptions(version);
+    return (
+      parts.includes('Compilation') && !parts.some((part) => NON_ALBUM_DESCRIPTIONS.includes(part))
+    );
+  });
+  if (compilation) return 'compilation';
+  const ep = official.some((version) => {
+    const parts = descriptions(version);
+    return (
+      parts.some((part) => EP_DESCRIPTIONS.includes(part)) &&
+      !parts.includes('Single') &&
+      !parts.includes('Maxi-Single')
+    );
+  });
+  return ep ? 'ep' : false;
+}
+
+/** A master counts when it has an official vinyl album, compilation, or EP pressing. */
 export function isVinylAlbum(vinylVersions: DiscogsMasterVersion[]): boolean {
-  return vinylVersions.some((version) => isOfficialVersion(version) && isAlbumVersion(version));
+  return vinylReleaseKind(vinylVersions) !== false;
 }
 
 export function parseYear(released: string | undefined): number | undefined {
