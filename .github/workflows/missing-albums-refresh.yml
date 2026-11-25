@@ -66,10 +66,10 @@ jobs:
               commit-tree "$tree" -m "Saved site data")
             git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
               "$commit:refs/heads/$DATA_BRANCH"
-            git fetch -q --depth 1 origin "$DATA_BRANCH:refs/remotes/origin/$DATA_BRANCH"
+            git fetch -q --depth 1 origin "+$DATA_BRANCH:refs/remotes/origin/$DATA_BRANCH"
             cd - > /dev/null
           }
-          git -C data fetch -q --depth 1 origin "$DATA_BRANCH:refs/remotes/origin/$DATA_BRANCH" || true
+          git -C data fetch -q --depth 1 origin "+$DATA_BRANCH:refs/remotes/origin/$DATA_BRANCH" || true
           end=$((SECONDS + 300 * 60))
           while :; do
             npx --yes tsx@4 scripts/missing-albums-refresh.ts

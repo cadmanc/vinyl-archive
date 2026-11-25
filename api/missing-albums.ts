@@ -144,6 +144,8 @@ export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve
 
 export class DiscogsRateLimitError extends Error {}
 
+export class DiscogsNotFoundError extends Error {}
+
 export async function discogsGet<T>(
   path: string,
   token: string,
@@ -171,6 +173,7 @@ export async function discogsGet<T>(
       await sleep(wait);
       continue;
     }
+    if (response.status === 404) throw new DiscogsNotFoundError(`Discogs has no ${path}`);
     if (!response.ok) throw new Error(`Discogs request failed with ${response.status}`);
     // Discogs refills roughly one request per second; slow down before hitting the limit.
     const remaining = Number(response.headers.get('x-discogs-ratelimit-remaining') ?? 60);

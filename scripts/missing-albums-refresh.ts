@@ -11,6 +11,7 @@ import path from 'node:path';
 import {
   creditsAllArtists,
   discogsGet,
+  DiscogsNotFoundError,
   isVinylAlbum,
   sleep,
   type DiscogsArtistReleasesPage,
@@ -44,6 +45,7 @@ const VARIOUS_ARTISTS_ID = 194;
 const MIN_REQUEST_GAP_MS = 1_250;
 // MusicBrainz asks for at most one request per second.
 const MUSICBRAINZ_GAP_MS = 1_100;
+const MUSICBRAINZ_ATTEMPTS = 4;
 const MUSICBRAINZ_URL = 'https://musicbrainz.org/ws/2/release-group/';
 const USER_AGENT = 'VinylArchive/1.0 (https://records.psamera.com)';
 const SAVE_EVERY_REQUESTS = 50;
@@ -242,17 +244,23 @@ class Refresher {
   }
 
   async musicBrainz<T>(query: string): Promise<T> {
-    const wait = this.lastMusicBrainzAt + MUSICBRAINZ_GAP_MS - Date.now();
-    if (wait > 0) await sleep(wait);
-    this.lastMusicBrainzAt = Date.now();
     const url = new URL(MUSICBRAINZ_URL);
     url.search = new URLSearchParams({ query, fmt: 'json', limit: '20' }).toString();
-    const response = await fetch(url, {
-      headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!response.ok) throw new Error(`MusicBrainz request failed with ${response.status}`);
-    return (await response.json()) as T;
+    for (let attempt = 1; ; attempt++) {
+      const wait = this.lastMusicBrainzAt + MUSICBRAINZ_GAP_MS - Date.now();
+      if (wait > 0) await sleep(wait);
+      this.lastMusicBrainzAt = Date.now();
+      const response = await fetch(url, {
+        headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (response.ok) return (await response.json()) as T;
+      // MusicBrainz answers 503 when it's busy or the shared runner address is asking too often.
+      if (response.status !== 503 || attempt >= MUSICBRAINZ_ATTEMPTS) {
+        throw new Error(`MusicBrainz request failed with ${response.status}`);
+      }
+      await sleep(attempt * 5_000);
+    }
   }
 
   async collection(username: string): Promise<{
@@ -501,8 +509,14 @@ async function main(): Promise<void> {
     try {
       await refresher.check(document, ownedMasters);
     } catch (error) {
-      // Progress so far is kept; the artist is picked up again next run.
-      console.warn(`Stopped checking ${key}:`, error);
+      if (error instanceof DiscogsNotFoundError && document.pagesFetched === 0) {
+        // Placeholder credits like "No Artist" have no discography to check.
+        Object.assign(document, { totalPages: 0, complete: true });
+        delete document.known;
+      } else {
+        // Progress so far is kept; the artist is picked up again next run.
+        console.warn(`Stopped checking ${key}:`, error);
+      }
       await refresher.save(document);
     }
     console.log(
