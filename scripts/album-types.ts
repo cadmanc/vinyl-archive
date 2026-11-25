@@ -1,5 +1,5 @@
 /**
- * Which of an artist's Discogs masters are studio, live or remix albums or EPs. Discogs doesn't
+ * Which of an artist's Discogs masters are studio, live or remix albums. Discogs doesn't
  * record album types, so they come from MusicBrainz's official release groups, matched to
  * Discogs by the master link MusicBrainz keeps or, failing that, by title and exact year.
  */
@@ -10,7 +10,6 @@ export interface TypedAlbum {
   title: string;
   year?: number;
   masterIds: number[];
-  ep?: true;
 }
 
 export interface MusicBrainzReleaseGroup {
@@ -56,12 +55,7 @@ export function typedAlbum(group: MusicBrainzReleaseGroup): TypedAlbum {
     .map((relation) => relation.url?.resource?.match(DISCOGS_MASTER)?.[1])
     .filter((id): id is string => !!id)
     .map(Number);
-  return {
-    title: group.title,
-    ...(year ? { year } : {}),
-    masterIds,
-    ...(group['primary-type'] === 'EP' ? { ep: true as const } : {}),
-  };
+  return { title: group.title, ...(year ? { year } : {}), masterIds };
 }
 
 /** Equal titles, or one is the other with a prefix such as "Artist present…". */
@@ -70,8 +64,8 @@ function sameTitle(left: string, right: string): boolean {
   return !!a && !!b && (a === b || a.endsWith(` ${b}`) || b.endsWith(` ${a}`));
 }
 
-export function typedMatch(master: ArtistMaster, albums: TypedAlbum[]): TypedAlbum | undefined {
-  return albums.find(
+export function isTypedAlbum(master: ArtistMaster, albums: TypedAlbum[]): boolean {
+  return albums.some(
     (album) =>
       album.masterIds.includes(master.masterId) ||
       (album.masterIds.length === 0 &&
@@ -80,12 +74,8 @@ export function typedMatch(master: ArtistMaster, albums: TypedAlbum[]): TypedAlb
   );
 }
 
-export function isTypedAlbum(master: ArtistMaster, albums: TypedAlbum[]): boolean {
-  return typedMatch(master, albums) !== undefined;
-}
-
 /**
- * Studio, live and remix albums and EPs credited to any of the artists. Null when MusicBrainz
+ * Studio, live and remix albums credited to any of the artists. Null when MusicBrainz
  * doesn't know any of them, so the caller can fall back to listing every vinyl album.
  */
 export async function typedAlbums(
@@ -105,7 +95,7 @@ export async function typedAlbums(
       for (let offset = 0; ; offset += PAGE_SIZE) {
         const page = await lookup<MusicBrainzReleaseGroupsPage>('release-group', {
           artist: id,
-          type: 'album|ep',
+          type: 'album',
           'release-group-status': 'website-default',
           inc: 'url-rels',
           limit: String(PAGE_SIZE),
