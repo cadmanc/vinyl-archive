@@ -2,14 +2,14 @@
 // Color Variables
 // ==============================================
 
-// Archival sage palette
-$color-primary: #7d8b72;
-$color-primary-dark: #596553;
-$color-primary-darker: #596553;
+// psamera.com copper palette
+$color-primary: #dea271;
+$color-primary-dark: #d0915e;
+$color-primary-darker: #b97a48;
 
-// Warm paper surfaces
-$color-background: #f3f1e8;
-$color-background-light: #d9dfd2;
+// Plain white surfaces with a copper tint
+$color-background: #ffffff;
+$color-background-light: #f8ece2;
 
 // Turntable Colors (User's turntable: #3986b3)
 $color-turntable-light: #3986b3;
@@ -20,15 +20,15 @@ $color-vinyl-dark: #1a1a1a;
 $color-vinyl-black: #000000;
 
 // Neutral Colors (Grays)
-$color-gray-900: #262822;
-$color-gray-700: #596553;
-$color-gray-600: #716f68;
-$color-gray-400: #716f68;
-$color-gray-300: #d3cfc3;
-$color-gray-200: #d9dfd2;
+$color-gray-900: #222222;
+$color-gray-700: #555555;
+$color-gray-600: #555555;
+$color-gray-400: #888888;
+$color-gray-300: #efd5c0;
+$color-gray-200: #f8ece2;
 
 // Base Colors
-$color-white: #f3f1e8;
+$color-white: #ffffff;
 $color-black: #000000;
 
 // Status Colors
@@ -40,15 +40,15 @@ $color-gray-800: #2d2d2d;
 // ==============================================
 
 // Text Colors
-$text-primary: #262822;
+$text-primary: #222222;
 $text-accent: $color-primary;
-$text-muted: #716f68;
-$text-subdued: #716f68;
-$text-dark: #262822;
+$text-muted: #555555;
+$text-subdued: #555555;
+$text-dark: #222222;
 
 // Border Colors
-$border-primary: #596553;
-$border-accent: #7d8b72;
+$border-primary: #dea271;
+$border-accent: #e5b58d;
 
 // ==============================================
 // Gradients
@@ -85,7 +85,7 @@ $shadow-xl: 0 12px 24px rgba($color-black, 0.18);
 $overlay-backdrop: rgba($color-black, 0.35);
 $overlay-light: rgba($color-black, 0.12);
 $overlay-card: rgba($color-background-light, 0.55);
-$overlay-card-border: #d3cfc3;
+$overlay-card-border: #efd5c0;
 $overlay-menu-button: $color-background-light;
-$overlay-menu-button-border: #d3cfc3;
+$overlay-menu-button-border: #efd5c0;
 $overlay-menu-button-hover: rgba($color-background-light, 0.85);

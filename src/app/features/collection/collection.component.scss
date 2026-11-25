@@ -18,7 +18,7 @@
 
 .eyebrow {
   margin: 0 0 0.125rem;
-  color: $text-accent;
+  color: $text-muted;
   font-size: 1.05rem;
   font-weight: 700;
 }
@@ -26,7 +26,7 @@
 h1 {
   margin: 0;
   font-family: 'Grand Slang', serif;
-  color: #dea271;
+  color: $color-primary;
   font-weight: 400;
   font-size: clamp(2.25rem, 7.5vw, 3.375rem);
 }
