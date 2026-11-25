@@ -332,7 +332,7 @@ export class CollectionComponent implements OnInit, OnDestroy {
     const state = this.artistAlbumsState(group);
     if (state?.status === 'ready') {
       const owned = group.releases.length;
-      return `${owned} ${owned === 1 ? 'Album' : 'Albums'}, ${this.missingAlbums(group).length} Missing`;
+      return `${owned} ${owned === 1 ? 'Album' : 'Albums'}, ${this.missingAlbums(group).length} missing`;
     }
     if (this.summaryStatus() !== 'ready') return 'Missing albums';
     const progress = this.groupProgress(group);

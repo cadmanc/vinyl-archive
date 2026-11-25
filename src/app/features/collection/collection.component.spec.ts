@@ -212,7 +212,7 @@ describe('CollectionComponent hidden missing albums', () => {
 
     expect(component.missingAlbums(group).map((album) => album.masterId)).toEqual([10]);
     expect(component.hiddenMissingAlbums(group).map((album) => album.masterId)).toEqual([11]);
-    expect(component.missingSummary(group)).toBe('1 Album, 1 Missing');
+    expect(component.missingSummary(group)).toBe('1 Album, 1 missing');
 
     hidden.hidden.set(new Set());
     expect(component.missingAlbums(group)).toHaveLength(2);
@@ -253,6 +253,6 @@ describe('CollectionComponent hidden missing albums', () => {
       },
     } as any);
     expect(component.missingAlbums(group).map((album) => album.masterId)).toEqual([21, 20]);
-    expect(component.missingSummary(group)).toBe('2 Albums, 2 Missing');
+    expect(component.missingSummary(group)).toBe('2 Albums, 2 missing');
   });
 });
