@@ -277,6 +277,31 @@ describe('FilterService', () => {
 
         expect(service.matchesFilters(release)).toBe(false);
       });
+
+      it.each([
+        ['Punk', ['Pop Punk'], true],
+        ['Heavy Metal', ['Thrash'], true],
+        ['Rap', ['Pop Rap'], true],
+        ['Rap', ['Trip Hop'], false],
+      ])('matches %s against Discogs styles %j', (genre, styles, expected) => {
+        service.setExcludeBoxSets(false);
+        service.setGenres([genre]);
+        const release = createMockRelease({
+          basicInfo: {
+            title: 'Album',
+            artists: ['Artist'],
+            year: 1990,
+            formats: ['Vinyl'],
+            thumb: '',
+            coverImage: '',
+            labels: [],
+            genres: ['Rock'],
+            styles,
+          },
+        });
+
+        expect(service.matchesFilters(release)).toBe(expected);
+      });
     });
 
     describe('decade filter', () => {

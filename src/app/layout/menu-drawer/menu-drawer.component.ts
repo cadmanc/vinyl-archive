@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { Subject } from 'rxjs';
 import { DatabaseService } from '../../core/database.service';
 import { FilterService } from '../../shared/services/filter.service';
+import { STYLE_GENRES, matchesGenre } from '../../shared/models/filter.model';
 
 @Component({
   selector: 'app-menu-drawer',
@@ -68,6 +69,9 @@ export class MenuDrawerComponent implements OnDestroy {
         const genreSet = new Set<string>();
         releases.forEach((r) => {
           r.basicInfo.genres?.forEach((g) => genreSet.add(g));
+          Object.keys(STYLE_GENRES)
+            .filter((g) => matchesGenre(g, [], r.basicInfo.styles ?? []))
+            .forEach((g) => genreSet.add(g));
         });
         this.availableGenres.set([...genreSet].sort());
 

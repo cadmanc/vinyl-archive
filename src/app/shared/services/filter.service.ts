@@ -1,5 +1,5 @@
 import { Injectable, signal, computed } from '@angular/core';
-import { RecommendationFilters, DEFAULT_FILTERS } from '../models/filter.model';
+import { RecommendationFilters, DEFAULT_FILTERS, matchesGenre } from '../models/filter.model';
 import { Release } from '../models/release.model';
 
 const STORAGE_KEY = 'vinyl-tracker-filters';
@@ -41,7 +41,10 @@ export class FilterService {
     // Genre filter (if any genres selected, release must match at least one)
     if (filters.genres.length > 0) {
       const releaseGenres = release.basicInfo.genres || [];
-      const hasMatchingGenre = filters.genres.some((g) => releaseGenres.includes(g));
+      const releaseStyles = release.basicInfo.styles || [];
+      const hasMatchingGenre = filters.genres.some((g) =>
+        matchesGenre(g, releaseGenres, releaseStyles),
+      );
       if (!hasMatchingGenre) {
         return false;
       }
