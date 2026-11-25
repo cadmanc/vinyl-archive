@@ -173,7 +173,9 @@ export class MasterReleaseService {
 
       for (const release of uniquePending) {
         try {
-          const enriched = await this.ensureReleaseMetadata(release);
+          // The saved catalog may have filled in details since the queue started.
+          const current = (await this.db.getRelease(release.id)) ?? release;
+          const enriched = await this.ensureReleaseMetadata(current);
           if (enriched) {
             this.releaseDetailUpdated.next(release.id);
             this.releaseDetailProgressSignal.update((progress) => ({

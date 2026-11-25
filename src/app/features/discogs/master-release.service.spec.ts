@@ -871,15 +871,7 @@ describe('MasterReleaseService', () => {
       const secondRelease = { ...mockReleaseNeedingData, id: 124, instanceId: 457 };
       db.getAllReleases.mockResolvedValue([mockReleaseNeedingData, secondRelease]);
       db.updateRelease.mockResolvedValue(1);
-      db.getRelease.mockResolvedValue({
-        ...mockReleaseNeedingData,
-        basicInfo: {
-          ...mockReleaseNeedingData.basicInfo,
-          detailsFetched: true,
-          trackCount: 1,
-          tracklist: [{ position: 'A1', title: 'Track' }],
-        },
-      });
+      db.getRelease.mockResolvedValue(undefined);
       http.get
         .mockReturnValueOnce(of({ tracklist: [{ position: 'A1', title: 'Track' }] }))
         .mockReturnValue(throwError(() => new Error('network failure')));
@@ -892,6 +884,25 @@ describe('MasterReleaseService', () => {
         basicInfo: expect.objectContaining({ detailsFetched: true, trackCount: 1 }),
       });
       expect(db.updateRelease).not.toHaveBeenCalledWith(124, expect.anything());
+    });
+
+    it('skips releases the saved catalog filled in after the queue started', async () => {
+      const db = spectator.inject(DatabaseService);
+      const http = spectator.inject(HttpClient);
+      db.getAllReleases.mockResolvedValue([mockReleaseNeedingData]);
+      db.getRelease.mockResolvedValue({
+        ...mockReleaseNeedingData,
+        basicInfo: { ...mockReleaseNeedingData.basicInfo, detailsFetched: true },
+      });
+
+      const queue = spectator.service.startReleaseDetailEnrichment();
+      await jest.advanceTimersByTimeAsync(DISCOGS_API_DELAY_MS * 5);
+      await queue;
+
+      expect(http.get).not.toHaveBeenCalled();
+      expect(spectator.service.releaseDetailProgress()).toEqual(
+        expect.objectContaining({ completed: 1, inProgress: false }),
+      );
     });
 
     it('starts the detail queue when the existing background sync entry point runs', async () => {

@@ -73,6 +73,8 @@ export class AppComponent implements OnInit {
         }
       }
       await this.db.removeReleasesNotIn(new Set(catalog.releases.map((release) => release.id)));
+      // A page opened straight onto the collection shows what this browser had before.
+      this.db.collectionChanged?.next();
     }
 
     const count = await this.db.getCollectionCount();
